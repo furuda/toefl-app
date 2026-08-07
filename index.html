@@ -58,6 +58,8 @@
         <span>⚙️</span><span class="hidden sm:inline">アプリ・発音設定</span>
       </button>
       <span id="streak-badge" class="text-xs bg-amber-500 text-white px-2 py-1 rounded-full font-bold hidden">🔥 0日連続</span>
+      <!-- ✨ 追加：セッション全体のカウントダウンタイマーバッジ -->
+      <span id="session-timer-badge" class="text-xs bg-indigo-800 text-white px-2.5 py-1 rounded-full font-mono font-bold hidden">⏳ 00:00</span>
       <span id="progress-indicator" class="text-xs bg-indigo-800 px-2.5 py-1 rounded-full font-mono hidden">0 / 0</span>
       <button id="pause-btn" onclick="pauseQuiz()" class="text-xs bg-rose-600 hover:bg-rose-700 px-2.5 py-1 rounded-lg hidden font-bold transition">
         ⏸️ 中断
@@ -247,6 +249,18 @@
             <span class="text-xs font-bold text-slate-400">〜</span>
             <input type="number" id="range-end-input" onchange="updateFilteredWordCount()" placeholder="終了(例:20)" min="1" class="w-full bg-white border border-slate-300 rounded-lg p-2 text-center text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500">
             <span class="text-xs font-bold text-slate-500 whitespace-nowrap">番目</span>
+          </div>
+          <!-- ✨ 追加：学習の制限時間（目標完了時間）の設定 -->
+          <div class="bg-slate-50 border border-slate-200 p-3 rounded-xl space-y-2">
+            <div class="flex justify-between items-center">
+              <label class="text-xs font-bold text-slate-700 flex items-center gap-1">
+                <span>⏱️</span><span>学習の制限時間（目標完了時間）</span>
+              </label>
+            </div>
+            <div class="flex items-center space-x-2">
+              <input type="number" id="time-limit-input" placeholder="例: 10" min="1" max="180" class="w-full bg-white border border-slate-300 rounded-lg p-2 text-center text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500">
+              <span class="text-xs font-bold text-slate-500 whitespace-nowrap">分以内 (空欄で無制限)</span>
+            </div>
           </div>
         </div>
 
@@ -606,7 +620,11 @@
       pronunciationFailCount: 0,
       testTimer: null,
       testSecondsLeft: 15,
-      testStartTime: 0
+      testStartTime: 0,
+      // ✨ 追加：セッション制限時間管理用
+      sessionTimer: null,
+      sessionSecondsLeft: 0,
+      totalSessionSeconds: 0
     };
 
     function escapeHtml(str) {
@@ -1448,6 +1466,19 @@
         // ランダムシャッフル
         App.queue = [...filtered].sort(() => Math.random() - 0.5);
       }
+
+      // ✨ 追加：制限時間の取得とタイマー開始
+      const timeLimitInput = document.getElementById('time-limit-input');
+      const timeLimitMin = timeLimitInput ? parseInt(timeLimitInput.value, 10) : NaN;
+      if (!isNaN(timeLimitMin) && timeLimitMin > 0) {
+        App.totalSessionSeconds = timeLimitMin * 60;
+        App.sessionSecondsLeft = App.totalSessionSeconds;
+        startSessionTimer();
+      } else {
+        App.totalSessionSeconds = 0;
+        App.sessionSecondsLeft = 0;
+        document.getElementById('session-timer-badge').classList.add('hidden');
+      }
     
       App.index = 0;
       App.roundBoundaryIndex = App.queue.length; // 一巡目の境界位置
@@ -1966,6 +1997,8 @@
     function showResults() {
       // タイマーの停止
       if (App.testTimer) clearInterval(App.testTimer);
+      if (App.sessionTimer) clearInterval(App.sessionTimer); // ✨ 追加
+      document.getElementById('session-timer-badge').classList.add('hidden'); // ✨ 追加
 
       // 他のコンテナを非表示
       document.getElementById('test-container').classList.add('hidden');
@@ -2114,6 +2147,10 @@
 
     function resetToSetup() {
       clearResumeData();
+
+      if (App.sessionTimer) clearInterval(App.sessionTimer); // ✨ 追加
+      document.getElementById('session-timer-badge').classList.add('hidden'); // ✨ 追加
+      
       document.getElementById('result-card').classList.add('hidden');
       document.getElementById('quiz-container').classList.add('hidden');
       document.getElementById('test-container').classList.add('hidden');
@@ -2128,6 +2165,7 @@
     function pauseQuiz() {
       if (confirm('学習を中断して状態を保存しますか？')) {
         if (App.testTimer) clearInterval(App.testTimer);
+        if (App.sessionTimer) clearInterval(App.sessionTimer); // ✨ 追加
     
         const state = {
           queue: App.queue,
@@ -2139,6 +2177,8 @@
           testResults: App.testResults,
           stats: App.stats,
           isTesting: App.isTesting,
+          totalSessionSeconds: App.totalSessionSeconds, // ✨ 追加
+          sessionSecondsLeft: App.sessionSecondsLeft, // ✨ 追加
           timestamp: new Date().toISOString()
         };
         
@@ -2197,6 +2237,12 @@
         App.testResults = state.testResults || [];
         App.stats = state.stats || { correct: 0, wrong: 0, testCorrect: 0, testWrong: 0 };
         App.isTesting = !!state.isTesting;
+        App.totalSessionSeconds = state.totalSessionSeconds || 0;
+        App.sessionSecondsLeft = state.sessionSecondsLeft || 0;
+        
+        if (App.totalSessionSeconds > 0) {
+          startSessionTimer(); // ✨ 再開時にタイマーを復元
+        }
     
         document.getElementById('resume-card').classList.add('hidden');
         document.getElementById('setup-card').classList.add('hidden');
@@ -2321,6 +2367,45 @@
           }
         }
       });
+    }
+    
+    function startSessionTimer() {
+      const badge = document.getElementById('session-timer-badge');
+      if (!badge || App.totalSessionSeconds <= 0) return;
+
+      badge.classList.remove('hidden');
+      updateSessionTimerUI();
+
+      if (App.sessionTimer) clearInterval(App.sessionTimer);
+      App.sessionTimer = setInterval(() => {
+        App.sessionSecondsLeft--;
+        updateSessionTimerUI();
+        if (App.sessionSecondsLeft <= 0) {
+          clearInterval(App.sessionTimer);
+          badge.className = 'text-xs bg-rose-600 text-white px-2.5 py-1 rounded-full font-mono font-bold animate-pulse';
+          badge.textContent = '⌛ 時間超過';
+          showToast('⏰ 設定した制限時間が経過しました！', 'error');
+        }
+      }, 1000);
+    }
+
+    function updateSessionTimerUI() {
+      const badge = document.getElementById('session-timer-badge');
+      if (!badge || App.totalSessionSeconds <= 0) {
+        badge.classList.add('hidden');
+        return;
+      }
+      const mins = Math.floor(Math.max(0, App.sessionSecondsLeft) / 60);
+      const secs = Math.max(0, App.sessionSecondsLeft) % 60;
+      const timeStr = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+      
+      if (App.sessionSecondsLeft <= 60) {
+        badge.className = 'text-xs bg-rose-500 text-white px-2.5 py-1 rounded-full font-mono font-bold animate-pulse';
+        badge.textContent = `⏳ 残り ${timeStr}`;
+      } else {
+        badge.className = 'text-xs bg-indigo-800 text-white px-2.5 py-1 rounded-full font-mono font-bold';
+        badge.textContent = `⏳ ${timeStr}`;
+      }
     }
   </script>
 </body>

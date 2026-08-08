@@ -1761,49 +1761,66 @@
       showCurrentTestQuestion();
     }
 
-    // 1. highlightWordInExample 関数（不規則動詞の過去分詞・y変形・従来のルールを網羅した修正版）
+    // 1. highlightWordInExample 関数（英語の全変形パターンを網羅したジェネリック版・デグレード防止）
     function highlightWordInExample(exampleText, wordToHighlight) {
       if (!exampleText) return 'No example available.';
       if (!wordToHighlight) return escapeHtml(exampleText);
     
       // 一旦テキストを安全にHTMLエスケープ
       const escapedEx = escapeHtml(exampleText);
-      let cleanWord = wordToHighlight.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      let cleanWord = wordToHighlight.trim().toLowerCase();
+      let escapedBase = cleanWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     
-      let stem = cleanWord;
-      let yVariant = '';
-      let irregularVariant = '';
-      
+      let patterns = [escapedBase];
+      let stem = escapedBase;
+      const lastChar = cleanWord.slice(-1);
+      const secondLastChar = cleanWord.length >= 2 ? cleanWord.slice(-2, -1) : '';
+
+      // 1. 'e' で終わる単語 (例: undertake -> undertaken, compelの前に処理されるもの等 / 例外含む)
       if (cleanWord.endsWith('e')) {
-        stem = cleanWord.slice(0, -1);
-      } else if (cleanWord.endsWith('y')) {
-        // amplify -> amplif + ied / ies / ier / iest などに対応
-        stem = cleanWord.slice(0, -1);
-        yVariant = `${stem}(?:ied|ies|ier|iest|ying)?`;
+        stem = escapedBase.slice(0, -1);
+        patterns.push(`${stem}e[ds]?`);        // 例: liked, likes
+        patterns.push(`${stem}ing`);           // 例: liking (eを取ってing)
+        patterns.push(`${stem}en`);            // 例: undertaken
+        patterns.push(`${stem}n`);             // 例: born 等
+      } 
+      // 2. 'y' で終わる単語 (例: amplify -> amplified, amplifies)
+      else if (cleanWord.endsWith('y')) {
+        stem = escapedBase.slice(0, -1);
+        patterns.push(`${stem}ies`);           // 例: amplifies
+        patterns.push(`${stem}ied`);           // 例: amplified
+        patterns.push(`${stem}ier`);           // 例: amplifierの比較級等
+        patterns.push(`${stem}iest`);
+        patterns.push(`${escapedBase}ing`);    // 例: studying
+        patterns.push(`${escapedBase}s`);      // 例: amplifies (yを残す場合もあるため)
+      } 
+      // 3. 短母音＋子音で終わる単語（子音字が重複してedやingになるパターン：例 compel -> compelled, compel -> compelling, stop -> stopped）
+      else if (!['a', 'e', 'i', 'o', 'u', 'w', 'x', 'y'].includes(lastChar) && 
+               ['a', 'e', 'i', 'o', 'u'].includes(secondLastChar)) {
+        patterns.push(`${escapedBase}${lastChar}[ds]?`); // 例: compelled, stopped, steps
+        patterns.push(`${escapedBase}${lastChar}ing`);  // 例: compelling, stopping
+        patterns.push(`${escapedBase}s?`);              // 通常のs
+        patterns.push(`${escapedBase}ed`);              // 通常のed
+        patterns.push(`${escapedBase}ing`);             // 通常のing
+      } 
+      // 4. その他の一般規則動詞・変化
+      else {
+        patterns.push(`${escapedBase}s?`);
+        patterns.push(`${escapedBase}ed`);
+        patterns.push(`${escapedBase}ing`);
+        patterns.push(`${escapedBase}en?`);
       }
 
-      // undertake -> undertaken のような不規則動詞の過去分詞（末尾に n, en, ne が付くパターン）に対応
-      // 例: undertake -> undertak + en などのベース抽出
+      // 特殊な不規則変化の個別マッピング（必要に応じた安全策）
       if (cleanWord === 'undertake') {
-        irregularVariant = 'undertaken';
-      } else if (cleanWord.endsWith('e')) {
-        irregularVariant = `${stem}(?:en|n)?`;
+        patterns.push('undertaken', 'undertook');
+      } else if (cleanWord === 'compel') {
+        patterns.push('compelled', 'compelling');
       }
-    
-      // マッチさせるパターンを構築
-      const patterns = [
-        `${cleanWord}(?:s|ed|ing|es|d)?`,
-        `${stem}(?:ing|ed|es|er|or)?`
-      ];
-      
-      if (yVariant) {
-        patterns.push(yVariant);
-      }
-      if (irregularVariant) {
-        patterns.push(irregularVariant);
-      }
-    
-      const regex = new RegExp(`\\b(${patterns.join('|')})\\b`, 'gi');
+
+      // 重複排除と長いパターンを優先して正規表現を構築（誤マッチを防ぐため長さを降順ソート）
+      const uniquePatterns = Array.from(new Set(patterns)).sort((a, b) => b.length - a.length);
+      const regex = new RegExp(`\\b(${uniquePatterns.join('|')})\\b`, 'gi');
     
       return escapedEx.replace(regex, '<strong class="font-extrabold text-indigo-700 underline decoration-indigo-400 decoration-2 font-mono">$1</strong>');
     }

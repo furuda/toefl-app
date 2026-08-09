@@ -2477,30 +2477,66 @@
     }
     
     /**
-     * ダブルクリック・クリックされた個別単語の辞書引き（修正版）
+     * ダブルクリック・クリックされた単語の辞書引き（例文・文脈に合わせた全意味表示版）
      */
-    async function lookupWordInApp(queryWord, targetEl) {
-      // 1. まずモーダルを開いてローディング表示と音声再生を行う
-      showDictModal(queryWord, '翻訳中...');
-      speakText(queryWord);
-
-      // 2. 翻訳APIを使用して、クリックされた個別単語（queryWord）の意味を取得する
-      let meaning = await translateWordWithApi(queryWord);
-
-      // 3. APIで取得できなかった場合のフォールバック（もしアプリ内の単語データに一致するものがあればそこから取得）
-      if (!meaning) {
-        const matchedWordItem = App.allWords.find(w => w.word.toLowerCase() === queryWord.toLowerCase());
-        if (matchedWordItem && matchedWordItem.details && matchedWordItem.details.length > 0) {
-          meaning = matchedWordItem.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
+    function lookupWordInApp(queryWord, targetEl) {
+      let ownerWord = null;
+    
+      // Step 1: クリックされた要素から、それが属する「単語カードブロック」を特定する
+      if (targetEl) {
+        const ownerBlock = targetEl.closest('[data-owner-word]');
+        if (ownerBlock) {
+          ownerWord = ownerBlock.dataset.ownerWord;
         }
       }
-
-      // 4. 最終的な意味を表示
-      if (meaning) {
-        showDictModal(queryWord, meaning);
-      } else {
-        showDictModal(queryWord, '訳データが見つかりませんでした');
+    
+      // Step 2: data属性から見つからない場合は現在表示中の単語をフォールバックとして使用
+      if (!ownerWord) {
+        const quizVisible = !document.getElementById('quiz-container').classList.contains('hidden');
+        const testVisible = !document.getElementById('test-container').classList.contains('hidden');
+        
+        if (quizVisible && App.queue[App.index]) {
+          ownerWord = App.queue[App.index].word;
+        } else if (testVisible && App.testQueue[App.testIndex]) {
+          ownerWord = App.testQueue[App.testIndex].word;
+        }
       }
+    
+      // Step 3: 親単語のすべての意味・詳細情報をデータベースから取得して結合表示する
+      if (ownerWord) {
+        const ownerItem = App.allWords.find(w => w.word.toLowerCase() === ownerWord.toLowerCase());
+        if (ownerItem && ownerItem.details && ownerItem.details.length > 0) {
+          // すべての意味・例文データを抽出してわかりやすくリスト化
+          const allMeanings = ownerItem.details.map(d => {
+            let text = `• 意味: ${d.meaningJa}`;
+            if (d.meaningEn) text += ` (${d.meaningEn})`;
+            if (d.exampleEn) text += `<br><span class="text-[10px] text-slate-500">例: ${d.exampleEn}</span>`;
+            return text;
+          }).join('<br>');
+          
+          showDictModal(`${ownerWord} (関連語: ${queryWord})`, allMeanings);
+          speakText(queryWord);
+          return;
+        }
+      }
+    
+      // Step 4: 親が見つからない場合は、全単語データの中から一致する単語の全意味を検索して表示
+      const matchedItem = App.allWords.find(w => w.word.toLowerCase() === queryWord.toLowerCase());
+      if (matchedItem && matchedItem.details && matchedItem.details.length > 0) {
+        const allMeanings = matchedItem.details.map(d => {
+          let text = `• 意味: ${d.meaningJa}`;
+          if (d.meaningEn) text += ` (${d.meaningEn})`;
+          return text;
+        }).join('<br>');
+        
+        showDictModal(queryWord, allMeanings);
+        speakText(queryWord);
+        return;
+      }
+    
+      // 見つからない場合のフォールバック
+      showDictModal(queryWord, '該当するデータが見つかりませんでした');
+      speakText(queryWord);
     }
     
     function showDictModal(word, meaning) {

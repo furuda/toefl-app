@@ -1561,10 +1561,14 @@
             html += `<div class="text-[11px] text-slate-500 italic">${escapeHtml(d.meaningEn)}</div>`;
           }
     
+
           if (d.exampleEn) {
             html += `
               <div class="text-[11px] text-indigo-900 font-medium pt-1 border-t border-slate-100 flex items-start justify-between gap-1">
-                <span>💬 ${escapeHtml(d.exampleEn)}</span>
+                <span class="example-text-dblclick cursor-text select-text"
+                      title="単語をダブルクリックすると意味を表示します">
+                  💬 ${escapeHtml(d.exampleEn)}
+                </span>
                 <button type="button" class="example-audio-btn text-xs shrink-0 hover:scale-110 transition">🔊</button>
               </div>`;
           }
@@ -2477,73 +2481,481 @@
     }
     
     /**
-     * ダブルクリック・クリックされた単語の辞書引き（例文・文脈に合わせた全意味表示版）
+     * ダブルクリック辞書引き
+     *
+     * 【重要】
+     * 親単語ではなく「実際にダブルクリックした単語」を検索する。
+     *
+     * 例：
+     * orient の英文：
+     *   to make oneself familiar with a situation
+     *
+     * familiar をダブルクリック
+     *   → familiar の意味を表示
+     *
+     * sacrifice の英文：
+     *   to give away in exchange...
+     *
+     * give をダブルクリック
+     *   → give の意味を表示
+     *
+     * fringe の意味：
+     *   a marginal or peripheral part
+     *
+     * marginal をダブルクリック
+     *   → marginal の意味を表示
      */
-    function lookupWordInApp(queryWord, targetEl) {
-      let ownerWord = null;
+    async function lookupWordInApp(queryWord, targetEl) {
+      const originalWord = String(queryWord || '').trim();
     
-      // Step 1: クリックされた要素から、それが属する「単語カードブロック」を特定する
-      if (targetEl) {
-        const ownerBlock = targetEl.closest('[data-owner-word]');
-        if (ownerBlock) {
-          ownerWord = ownerBlock.dataset.ownerWord;
-        }
+      if (!originalWord) return;
+    
+      // ------------------------------------------------------------
+      // 1. ダブルクリックした単語を正規化
+      // ------------------------------------------------------------
+      const normalizedWord = normalizeLookupWord(originalWord);
+    
+      if (!normalizedWord) return;
+    
+      // ------------------------------------------------------------
+      // 2. まずアプリ内の「単語リスト」を検索
+      //    → ここが最優先
+      // ------------------------------------------------------------
+      let result = findWordMeaningInApp(normalizedWord);
+    
+      if (result) {
+        showDictModal(
+          originalWord,
+          result.meaning,
+          result.source || 'アプリ内データ'
+        );
+    
+        speakText(originalWord);
+        return;
       }
     
-      // Step 2: data属性から見つからない場合は現在表示中の単語をフォールバックとして使用
-      if (!ownerWord) {
-        const quizVisible = !document.getElementById('quiz-container').classList.contains('hidden');
-        const testVisible = !document.getElementById('test-container').classList.contains('hidden');
-        
-        if (quizVisible && App.queue[App.index]) {
-          ownerWord = App.queue[App.index].word;
-        } else if (testVisible && App.testQueue[App.testIndex]) {
-          ownerWord = App.testQueue[App.testIndex].word;
-        }
-      }
+      // ------------------------------------------------------------
+      // 3. 活用形から元の単語を探す
+      //    例：
+      //      studied → study
+      //      studies → study
+      //      working → work
+      //      undertaken → undertake
+      // ------------------------------------------------------------
+      const baseCandidates = generateBaseWordCandidates(normalizedWord);
     
-      // Step 3: 親単語のすべての意味・詳細情報をデータベースから取得して結合表示する
-      if (ownerWord) {
-        const ownerItem = App.allWords.find(w => w.word.toLowerCase() === ownerWord.toLowerCase());
-        if (ownerItem && ownerItem.details && ownerItem.details.length > 0) {
-          // すべての意味・例文データを抽出してわかりやすくリスト化
-          const allMeanings = ownerItem.details.map(d => {
-            let text = `• 意味: ${d.meaningJa}`;
-            if (d.meaningEn) text += ` (${d.meaningEn})`;
-            if (d.exampleEn) text += `<br><span class="text-[10px] text-slate-500">例: ${d.exampleEn}</span>`;
-            return text;
-          }).join('<br>');
-          
-          showDictModal(`${ownerWord} (関連語: ${queryWord})`, allMeanings);
-          speakText(queryWord);
+      for (const candidate of baseCandidates) {
+        result = findWordMeaningInApp(candidate);
+    
+        if (result) {
+          showDictModal(
+            originalWord,
+            result.meaning,
+            `${candidate} の意味`
+          );
+    
+          speakText(originalWord);
           return;
         }
       }
     
-      // Step 4: 親が見つからない場合は、全単語データの中から一致する単語の全意味を検索して表示
-      const matchedItem = App.allWords.find(w => w.word.toLowerCase() === queryWord.toLowerCase());
-      if (matchedItem && matchedItem.details && matchedItem.details.length > 0) {
-        const allMeanings = matchedItem.details.map(d => {
-          let text = `• 意味: ${d.meaningJa}`;
-          if (d.meaningEn) text += ` (${d.meaningEn})`;
-          return text;
-        }).join('<br>');
-        
-        showDictModal(queryWord, allMeanings);
-        speakText(queryWord);
-        return;
+      // ------------------------------------------------------------
+      // 4. アプリ内に見つからなかった場合
+      //    文脈を取得して翻訳APIで補完
+      // ------------------------------------------------------------
+      const contextPhrase = extractContextPhrase(originalWord, targetEl);
+    
+      showDictModal(
+        originalWord,
+        '意味を検索しています...',
+        '検索中'
+      );
+    
+      try {
+        // まず単語単体を検索
+        let translated = await translateWordWithApi(originalWord);
+    
+        // 単語単体の翻訳が取れなければ文脈を使う
+        if (!translated && contextPhrase) {
+          translated = await translatePhrase(contextPhrase);
+        }
+    
+        if (translated) {
+          showDictModal(
+            originalWord,
+            translated,
+            '自動翻訳'
+          );
+        } else {
+          showDictModal(
+            originalWord,
+            'この単語の意味データが見つかりませんでした。',
+            '辞書データなし'
+          );
+        }
+      } catch (err) {
+        console.error('Dictionary lookup error:', err);
+    
+        showDictModal(
+          originalWord,
+          '意味を取得できませんでした。',
+          'エラー'
+        );
       }
     
-      // 見つからない場合のフォールバック
-      showDictModal(queryWord, '該当するデータが見つかりませんでした');
-      speakText(queryWord);
+      speakText(originalWord);
     }
     
-    function showDictModal(word, meaning) {
-      document.getElementById('dict-word').textContent = word;
-      document.getElementById('dict-meaning').textContent = meaning;
+    
+    /**
+     * 単語検索用の正規化
+     *
+     * 例：
+     *   "Familiar" → "familiar"
+     *   "give,"     → "give"
+     *   "(marginal)" → "marginal"
+     */
+    function normalizeLookupWord(word) {
+      if (!word) return '';
+    
+      return String(word)
+        .trim()
+        .toLowerCase()
+        .replace(/^[^a-zA-Z'-]+/, '')
+        .replace(/[^a-zA-Z'-]+$/, '')
+        .replace(/^['"]+|['"]+$/g, '')
+        .trim();
+    }
+    
+    
+    /**
+     * App.allWords の中から「その単語自身」の意味を探す。
+     *
+     * 優先順位：
+     *
+     * ① 通常の単語データ
+     * ② 派生語データ
+     * ③ meaningEn 内にその単語が含まれているデータ
+     *
+     * ※ 一番重要なのは①。
+     *    親単語の意味を返すのではなく、
+     *    検索対象の単語自身の details を返す。
+     */
+    function findWordMeaningInApp(queryWord) {
+      const target = normalizeLookupWord(queryWord);
+    
+      if (!target || !Array.isArray(App.allWords)) {
+        return null;
+      }
+    
+      // ============================================================
+      // ① 通常の単語として完全一致
+      // ============================================================
+      const exactItem = App.allWords.find(item => {
+        return normalizeLookupWord(item.word) === target;
+      });
+    
+      if (exactItem) {
+        const meanings = [];
+    
+        if (Array.isArray(exactItem.details)) {
+          exactItem.details.forEach(detail => {
+            if (detail && detail.meaningJa) {
+              const meaning = String(detail.meaningJa).trim();
+    
+              if (meaning && !meanings.includes(meaning)) {
+                meanings.push(meaning);
+              }
+            }
+          });
+        }
+    
+        if (meanings.length > 0) {
+          return {
+            meaning: meanings.join(' / '),
+            source: '単語データ'
+          };
+        }
+      }
+    
+      // ============================================================
+      // ② 派生語として完全一致
+      // ============================================================
+      for (const item of App.allWords) {
+        if (!Array.isArray(item.derived)) continue;
+    
+        for (const derived of item.derived) {
+          if (!derived || !derived.derivedWord) continue;
+    
+          const derivedWord = normalizeLookupWord(derived.derivedWord);
+    
+          if (derivedWord === target) {
+            if (derived.meaning) {
+              return {
+                meaning: String(derived.meaning).trim(),
+                source: '派生語データ'
+              };
+            }
+          }
+        }
+      }
+    
+      // ============================================================
+      // ③ meaningEn に単語が含まれている場合
+      //
+      // これは最後のアプリ内検索。
+      //
+      // 例えばデータ上、
+      //   "to make oneself familiar with a situation"
+      //
+      // のように登録されていても、
+      // familiar 自体が単語リストにない場合がある。
+      //
+      // この場合は「親単語の意味」を返さず、
+      // 後のAPI検索に進ませる。
+      //
+      // → ここでは誤った親単語の意味を表示しないことを優先する。
+      // ============================================================
+    
+      return null;
+    }
+    
+    
+    /**
+     * 活用形から元の単語候補を作る。
+     *
+     * 例：
+     *   studies     → study
+     *   studied     → study
+     *   studying    → study
+     *   worked      → work
+     *   working     → work
+     *   undertaken  → undertake
+     */
+    function generateBaseWordCandidates(word) {
+      const candidates = [];
+      const add = value => {
+        if (!value) return;
+    
+        const normalized = normalizeLookupWord(value);
+    
+        if (
+          normalized &&
+          normalized !== word &&
+          !candidates.includes(normalized)
+        ) {
+          candidates.push(normalized);
+        }
+      };
+    
+      // ------------------------------------------------------------
+      // 不規則変化
+      // ------------------------------------------------------------
+      const irregularMap = {
+        am: 'be',
+        is: 'be',
+        are: 'be',
+        was: 'be',
+        were: 'be',
+        been: 'be',
+        being: 'be',
+    
+        went: 'go',
+        gone: 'go',
+        going: 'go',
+    
+        gave: 'give',
+        given: 'give',
+        giving: 'give',
+    
+        took: 'take',
+        taken: 'take',
+        taking: 'take',
+    
+        made: 'make',
+        making: 'make',
+    
+        saw: 'see',
+        seen: 'see',
+        seeing: 'see',
+    
+        came: 'come',
+        coming: 'come',
+    
+        knew: 'know',
+        known: 'know',
+        knowing: 'know',
+    
+        thought: 'think',
+        thinking: 'think',
+    
+        bought: 'buy',
+        buying: 'buy',
+    
+        brought: 'bring',
+        bringing: 'bring',
+    
+        found: 'find',
+        finding: 'find',
+    
+        told: 'tell',
+        telling: 'tell',
+    
+        said: 'say',
+        saying: 'say',
+    
+        got: 'get',
+        gotten: 'get',
+        getting: 'get',
+    
+        had: 'have',
+        having: 'have',
+    
+        did: 'do',
+        done: 'do',
+        doing: 'do',
+    
+        knew: 'know',
+    
+        understood: 'understand',
+        understanding: 'understand',
+    
+        undertook: 'undertake',
+        undertaken: 'undertake'
+      };
+    
+      if (irregularMap[word]) {
+        add(irregularMap[word]);
+      }
+    
+      // ------------------------------------------------------------
+      // -ies → -y
+      // studies → study
+      // carries → carry
+      // ------------------------------------------------------------
+      if (word.endsWith('ies') && word.length > 3) {
+        add(word.slice(0, -3) + 'y');
+      }
+    
+      // ------------------------------------------------------------
+      // -ied → -y
+      // studied → study
+      // carried → carry
+      // ------------------------------------------------------------
+      if (word.endsWith('ied') && word.length > 3) {
+        add(word.slice(0, -3) + 'y');
+      }
+    
+      // ------------------------------------------------------------
+      // -ing
+      // ------------------------------------------------------------
+      if (word.endsWith('ing') && word.length > 5) {
+        const stem = word.slice(0, -3);
+    
+        add(stem);
+    
+        // making → make
+        add(stem + 'e');
+    
+        // studying → study
+        if (stem.endsWith('y')) {
+          add(stem);
+        }
+    
+        // running → run
+        if (
+          stem.length >= 2 &&
+          stem.charAt(stem.length - 1) === stem.charAt(stem.length - 2)
+        ) {
+          add(stem.slice(0, -1));
+        }
+      }
+    
+      // ------------------------------------------------------------
+      // -ed
+      // ------------------------------------------------------------
+      if (word.endsWith('ed') && word.length > 4) {
+        const stem = word.slice(0, -2);
+    
+        add(stem);
+    
+        // liked → like
+        add(stem + 'e');
+    
+        // studied → study
+        if (stem.endsWith('i')) {
+          add(stem.slice(0, -1) + 'y');
+        }
+    
+        // stopped → stop
+        if (
+          stem.length >= 2 &&
+          stem.charAt(stem.length - 1) === stem.charAt(stem.length - 2)
+        ) {
+          add(stem.slice(0, -1));
+        }
+      }
+    
+      // ------------------------------------------------------------
+      // -es
+      // ------------------------------------------------------------
+      if (word.endsWith('es') && word.length > 4) {
+        const stem = word.slice(0, -2);
+    
+        add(stem);
+        add(stem + 'e');
+      }
+    
+      // ------------------------------------------------------------
+      // -s
+      // ------------------------------------------------------------
+      if (
+        word.endsWith('s') &&
+        !word.endsWith('ss') &&
+        word.length > 3
+      ) {
+        add(word.slice(0, -1));
+      }
+    
+      return candidates;
+    }
+    
+    
+    /**
+     * 辞書モーダル表示
+     *
+     * 3番目の引数 source は、
+     * 「単語データ」「派生語データ」「自動翻訳」などを表示するためのもの。
+     */
+    function showDictModal(word, meaning, source = '') {
+      const wordEl = document.getElementById('dict-word');
+      const meaningEl = document.getElementById('dict-meaning');
+    
+      if (wordEl) {
+        wordEl.textContent = word || '';
+      }
+    
+      if (meaningEl) {
+        meaningEl.textContent = meaning || '意味が見つかりませんでした。';
+      }
+    
+      // 出典表示用の要素がまだなければ作成
+      let sourceEl = document.getElementById('dict-source');
+    
+      if (!sourceEl && meaningEl) {
+        sourceEl = document.createElement('div');
+        sourceEl.id = 'dict-source';
+        sourceEl.className = 'text-[10px] text-slate-400 mt-1';
+        meaningEl.parentNode.appendChild(sourceEl);
+      }
+    
+      if (sourceEl) {
+        sourceEl.textContent = source ? `📌 ${source}` : '';
+      }
+    
       document.getElementById('dict-modal').classList.remove('hidden');
     }
+
 
     /**
      * 翻訳API呼び出し（単語単体・緩和版）

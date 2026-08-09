@@ -2422,13 +2422,13 @@
       lookupWordInApp(selectedText);
     });
 
-    // ✨ 改善：アプリ内検索 ＋ 未登録時はオンライン辞書API（Free Dictionary API）でネット検索
+    // 💡 改善：アプリ内検索の強化 ＋ ネット辞書で品詞（形容詞・動詞）を優先する賢い辞書検索
     async function lookupWordInApp(queryWord) {
-      const cleanQuery = queryWord.toLowerCase();
+      const cleanQuery = queryWord.toLowerCase().trim();
       let foundMeaning = '';
       let matchedWord = queryWord;
 
-      // 1. アプリ内登録単語データから完全一致または原形一致を探す
+      // 1. アプリ内登録単語データから完全一致を探す
       for (const item of App.allWords) {
         if (item.word.toLowerCase() === cleanQuery) {
           matchedWord = item.word;
@@ -2439,7 +2439,41 @@
         }
       }
 
-      // 2. アプリ内に無い場合、外部の無料オンライン辞書API（Free Dictionary API）でネット検索
+      // 2. 見つからない場合、語尾の変化（s, ed, ing, es等）を落とした原形でもアプリ内を探す
+      if (!foundMeaning) {
+        let baseQuery = cleanQuery;
+        if (baseQuery.endsWith('ies')) baseQuery = baseQuery.slice(0, -3) + 'y';
+        else if (baseQuery.endsWith('es') || baseQuery.endsWith('ed')) baseQuery = baseQuery.slice(0, -2);
+        else if (baseQuery.endsWith('s') || baseQuery.endsWith('ing') || baseQuery.endsWith('d')) {
+          baseQuery = baseQuery.endsWith('ing') ? baseQuery.slice(0, -3) : baseQuery.slice(0, -1);
+        }
+
+        for (const item of App.allWords) {
+          const itemW = item.word.toLowerCase();
+          if (itemW === baseQuery || itemW.startsWith(baseQuery)) {
+            matchedWord = item.word;
+            if (item.details && item.details.length > 0) {
+              foundMeaning = item.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
+            }
+            break;
+          }
+        }
+      }
+
+      // 3. それでもアプリ内で見つからない場合、詳細や例文内を横断検索
+      if (!foundMeaning) {
+        for (const item of App.allWords) {
+          if (item.word.toLowerCase().includes(cleanQuery)) {
+            matchedWord = item.word;
+            if (item.details && item.details.length > 0) {
+              foundMeaning = item.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
+            }
+            break;
+          }
+        }
+      }
+
+      // 4. アプリ内に全くない場合のみ、ネット辞書（Free Dictionary API）で検索
       if (!foundMeaning) {
         document.getElementById('dict-word').textContent = matchedWord;
         document.getElementById('dict-meaning').textContent = '🌐 ネット辞書から検索中...';
@@ -2451,14 +2485,25 @@
           
           const data = await res.json();
           if (data && data.length > 0 && data[0].meanings) {
-            // 最初の定義や品詞情報を抽出
-            const firstMeaning = data[0].meanings[0];
-            const partOfSpeech = firstMeaning.partOfSpeech || '';
-            const definition = firstMeaning.definitions && firstMeaning.definitions[0] ? firstMeaning.definitions[0].definition : '';
+            // 💡 特殊な名詞の意味（使い魔など）を避け、形容詞や動詞の定義を優先して選択する
+            let selectedMeaningObj = null;
+            
+            // 形容詞(adjective)または動詞(verb)を最優先で探す
+            for (const m of data[0].meanings) {
+              if (m.partOfSpeech === 'adjective' || m.partOfSpeech === 'verb') {
+                selectedMeaningObj = m;
+                break;
+              }
+            }
+            // なければ最初の意味を使用
+            if (!selectedMeaningObj) selectedMeaningObj = data[0].meanings[0];
+
+            const partOfSpeech = selectedMeaningObj.partOfSpeech || '';
+            const definition = selectedMeaningObj.definitions && selectedMeaningObj.definitions[0] ? selectedMeaningObj.definitions[0].definition : '';
             
             foundMeaning = `[${partOfSpeech}] ${definition}`;
           } else {
-            foundMeaning = '（オンライン辞書にも該当する単語が見つかりませんでした）';
+            foundMeaning = '（オンライン辞書に該当する定義が見つかりませんでした）';
           }
         } catch (err) {
           foundMeaning = '（アプリ内・ネット辞書ともに未登録の単語です。音声で発音を確認できます）';

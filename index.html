@@ -7,6 +7,13 @@
   <title>TOEFL英単語学習アプリ Pro</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
+    #dict-word,
+    #dict-meaning,
+    #dict-source {
+      user-select: text !important;
+      -webkit-user-select: text !important;
+      cursor: text;
+    }
     .perspective { perspective: 1000px; }
     .transform-style-3d { transform-style: preserve-3d; }
     .backface-hidden { backface-visibility: hidden; }
@@ -2920,12 +2927,10 @@
       return candidates;
     }
     
-    
     /**
      * 辞書モーダル表示
      *
-     * 3番目の引数 source は、
-     * 「単語データ」「派生語データ」「自動翻訳」などを表示するためのもの。
+     * 意味の部分をマウスで選択・コピーできるようにする。
      */
     function showDictModal(word, meaning, source = '') {
       const wordEl = document.getElementById('dict-word');
@@ -2933,19 +2938,37 @@
     
       if (wordEl) {
         wordEl.textContent = word || '';
+    
+        // 単語も選択可能
+        wordEl.style.userSelect = 'text';
+        wordEl.style.webkitUserSelect = 'text';
+        wordEl.style.cursor = 'text';
       }
     
       if (meaningEl) {
         meaningEl.textContent = meaning || '意味が見つかりませんでした。';
+    
+        // ★ 意味をマウスで選択・コピー可能にする
+        meaningEl.style.userSelect = 'text';
+        meaningEl.style.webkitUserSelect = 'text';
+        meaningEl.style.cursor = 'text';
+    
+        // 長い意味でも選択しやすいようにする
+        meaningEl.style.pointerEvents = 'auto';
       }
     
-      // 出典表示用の要素がまだなければ作成
+      // 出典表示用の要素
       let sourceEl = document.getElementById('dict-source');
     
       if (!sourceEl && meaningEl) {
         sourceEl = document.createElement('div');
         sourceEl.id = 'dict-source';
         sourceEl.className = 'text-[10px] text-slate-400 mt-1';
+    
+        // 出典も選択可能
+        sourceEl.style.userSelect = 'text';
+        sourceEl.style.webkitUserSelect = 'text';
+    
         meaningEl.parentNode.appendChild(sourceEl);
       }
     
@@ -2955,7 +2978,6 @@
     
       document.getElementById('dict-modal').classList.remove('hidden');
     }
-
 
     /**
      * 翻訳API呼び出し（単語単体・緩和版）

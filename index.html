@@ -2367,50 +2367,54 @@
       if (chk) chk.checked = App.tts.pronounceCheckEnabled;
     }
 
+    // 根本的な解決策：ダブルクリックされた要素から正確な単語のテキストを取得する
     document.addEventListener('dblclick', (e) => {
       let selectedText = '';
       
-      // ユーザーが明示的にドラッグして選択している場合
+      // 1. ユーザーがドラッグして選択している場合はそれを最優先
       const selection = window.getSelection();
       if (selection && selection.toString().trim().length > 0) {
         selectedText = selection.toString().trim();
-      } 
+      }
       
-      // ダブルクリックされた位置の単語を正確にピンポイントで抽出する
-      if (!selectedText && document.caretRangeFromPoint) {
-        const range = document.caretRangeFromPoint(e.clientX, e.clientY);
-        if (range && range.startContainer) {
-          let textNode = range.startContainer;
-          
-          if (textNode.nodeType !== Node.TEXT_NODE && textNode.childNodes.length > 0) {
-            for (let i = 0; i < textNode.childNodes.length; i++) {
-              if (textNode.childNodes[i].nodeType === Node.TEXT_NODE) {
-                textNode = textNode.childNodes[i];
-                break;
+      // 2. ダブルクリックされた位置の単語を、クリックされた正確なターゲット要素（テキストノード）から取得
+      if (!selectedText) {
+        let target = e.target;
+        
+        // もしクリックされたのがボタンや親要素であれば、その中のテキスト全体、またはクリック位置の単語を安全に取得
+        if (target && target.nodeType === Node.ELEMENT_NODE) {
+          // ダブルクリックされた位置の単語をcaretRangeFromPointで安全にヒットさせる
+          if (document.caretRangeFromPoint) {
+            const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+            if (range && range.startContainer) {
+              let textNode = range.startContainer;
+              if (textNode.nodeType === Node.TEXT_NODE) {
+                const text = textNode.nodeValue;
+                let offset = range.startOffset;
+                if (offset > text.length) offset = text.length;
+                
+                // スペースや記号の境界までを正確に切り出す
+                let start = offset;
+                while (start > 0 && /[a-zA-Z\-']/.test(text.charAt(start - 1))) {
+                  start--;
+                }
+                let end = offset;
+                while (end < text.length && /[a-zA-Z\-']/.test(text.charAt(end))) {
+                  end++;
+                }
+                selectedText = text.substring(start, end).trim();
               }
             }
           }
           
-          if (textNode.nodeType === Node.TEXT_NODE) {
-            const text = textNode.nodeValue;
-            let offset = range.startOffset;
-            if (offset > text.length) offset = text.length;
-            
-            // スペースや記号を境界として、クリックされた「1単語」を完全に切り出す
-            let start = offset;
-            while (start > 0 && /[a-zA-Z\-']/.test(text.charAt(start - 1))) {
-              start--;
-            }
-            let end = offset;
-            while (end < text.length && /[a-zA-Z\-']/.test(text.charAt(end))) {
-              end++;
-            }
-            selectedText = text.substring(start, end).trim();
+          // 万が一caretRangeFromPointで取れない場合のフォールバック（要素のテキストから推測せず空にする）
+          if (!selectedText && target.textContent && target.textContent.length < 50) {
+            selectedText = target.textContent.trim();
           }
         }
       }
       
-      // 前後の記号を削除
+      // 前後の記号や不要な文字を完全に削ぎ落とす
       selectedText = selectedText.replace(/^[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+/,"")
                                    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+$/,"")
                                    .trim();

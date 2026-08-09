@@ -2422,7 +2422,7 @@
       lookupWordInApp(selectedText);
     });
 
-    // 💡 改善：アプリ内検索の強化 ＋ ネット辞書で品詞（形容詞・動詞）を優先する賢い辞書検索
+    // 💡 改善：ネット辞書検索時に、英語の定義ではなく「日本語の意味（翻訳）」を取得して表示する
     async function lookupWordInApp(queryWord) {
       const cleanQuery = queryWord.toLowerCase().trim();
       let foundMeaning = '';
@@ -2473,39 +2473,31 @@
         }
       }
 
-      // 4. アプリ内に全くない場合のみ、ネット辞書（Free Dictionary API）で検索
+      // 4. アプリ内に全くない場合、日本語訳を返す外部API（MyMemory翻訳API / Wiktionary等）を使って日本語の意味を取得
       if (!foundMeaning) {
         document.getElementById('dict-word').textContent = matchedWord;
-        document.getElementById('dict-meaning').textContent = '🌐 ネット辞書から検索中...';
+        document.getElementById('dict-meaning').textContent = '🌐 ネットから日本語の意味を検索中...';
         document.getElementById('dict-modal').classList.remove('hidden');
 
         try {
-          const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(cleanQuery)}`);
-          if (!res.ok) throw new Error('Not found');
+          // MyMemory翻訳API（英語→日本語の正確な訳を取得）
+          const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanQuery)}&langpair=en|ja`);
+          if (!res.ok) throw new Error('Translation failed');
           
           const data = await res.json();
-          if (data && data.length > 0 && data[0].meanings) {
-            // 💡 特殊な名詞の意味（使い魔など）を避け、形容詞や動詞の定義を優先して選択する
-            let selectedMeaningObj = null;
-            
-            // 形容詞(adjective)または動詞(verb)を最優先で探す
-            for (const m of data[0].meanings) {
-              if (m.partOfSpeech === 'adjective' || m.partOfSpeech === 'verb') {
-                selectedMeaningObj = m;
-                break;
-              }
+          if (data && data.responseData && data.responseData.translatedText) {
+            let translated = data.responseData.translatedText;
+            // APIがうまく翻訳できなかったり、英語のまま返ってきた場合のチェック
+            if (translated && translated.toLowerCase() !== cleanQuery) {
+              foundMeaning = `【日本語訳】 ${translated}`;
+            } else {
+              foundMeaning = '（日本語訳が見つかりませんでした。音声で発音を確認できます）';
             }
-            // なければ最初の意味を使用
-            if (!selectedMeaningObj) selectedMeaningObj = data[0].meanings[0];
-
-            const partOfSpeech = selectedMeaningObj.partOfSpeech || '';
-            const definition = selectedMeaningObj.definitions && selectedMeaningObj.definitions[0] ? selectedMeaningObj.definitions[0].definition : '';
-            
-            foundMeaning = `[${partOfSpeech}] ${definition}`;
           } else {
-            foundMeaning = '（オンライン辞書に該当する定義が見つかりませんでした）';
+            foundMeaning = '（日本語訳の取得に失敗しました）';
           }
         } catch (err) {
+          // ネット接続エラー等のフォールバック
           foundMeaning = '（アプリ内・ネット辞書ともに未登録の単語です。音声で発音を確認できます）';
         }
       }

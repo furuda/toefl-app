@@ -2373,13 +2373,13 @@
     document.addEventListener('dblclick', (e) => {
       let selectedText = '';
       
-      // 1. ユーザー選択テキストを優先
+      // 1. ユーザーがドラッグ選択しているテキストを最優先
       const selection = window.getSelection();
       if (selection && selection.toString().trim().length > 0) {
         selectedText = selection.toString().trim();
       }
       
-      // 2. 選択がなければcaretRangeFromPointで位置の単語を取得
+      // 2. 選択がなければ、クリック位置の単語を caretRangeFromPoint で取得
       if (!selectedText) {
         if (document.caretRangeFromPoint) {
           const range = document.caretRangeFromPoint(e.clientX, e.clientY);
@@ -2397,7 +2397,7 @@
         }
       }
       
-      // 3. 不要な記号を除去
+      // 3. 前後の記号を除去
       selectedText = selectedText
         .replace(/^[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+/, '')
         .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+$/, '')
@@ -2405,8 +2405,8 @@
     
       if (!selectedText) return;
       
-      // ★ 第2引数に e.target を渡してDOM文脈解析を可能にする
-      lookupWordInApp(selectedText, e.target);
+      // ★ 第2引数（e.target）を渡さず、単語単体で検索
+      lookupWordInApp(selectedText);
     });
 
     /**
@@ -2486,87 +2486,64 @@
     }
     
     // ============================================
-    // ダブルクリック辞書機能（完全書き換え版）
+    // ダブルクリック辞書機能（根本修正版）
     // ============================================
     
     /**
-     * メイン辞書引き関数
-     * @param {string} queryWord - ダブルクリックされた単語
-     * @param {Element} targetEl - ダブルクリックされたDOM要素（文脈特定用）
+     * ダブルクリックされた単語の辞書引き
+     * 
+     * 【修正方針】
+     * 1. App.allWords を「単語完全一致」で検索 → 見つかればその日本語訳を即表示
+     * 2. アプリ内にない場合のみ、翻訳APIで単語単体を翻訳
+     * 
+     * ※ 前回の「親ブロックから .font-bold.text-slate-800 を探す」処理は削除。
+     *   これが「orientのfamiliar」を押したのに orient の意味が出る原因だった。
      */
-    async function lookupWordInApp(queryWord, targetEl) {
+    async function lookupWordInApp(queryWord) {
       const cleanQuery = queryWord.toLowerCase().trim();
-      let matchedWord = queryWord;
-      let results = []; // 表示候補を優先順位で溜める
     
-      // ========================================
       // Step 1: アプリ内辞書検索（最優先・最確実）
-      // ========================================
+      // App.allWords の中から「ダブルクリックした単語そのもの」を探す
       const foundInApp = App.allWords.find(item => 
         item.word.toLowerCase() === cleanQuery
       );
       
       if (foundInApp && foundInApp.details && foundInApp.details.length > 0) {
-        matchedWord = foundInApp.word;
         const appMeanings = foundInApp.details
           .map(d => d.meaningJa)
           .filter(Boolean)
           .join(' / ');
         
-        if (appMeanings) {
-          results.push({ type: '単語登録訳', text: appMeanings });
-        }
+        showDictModal(foundInApp.word, appMeanings);
+        speakText(foundInApp.word);
+        return; // ← アプリ内で見つかればここで終了。親単語の意味を探しに行かない
       }
     
-      // ========================================
-      // Step 2: DOM文脈検索（クリックされたブロックの日本語訳）
-      // ========================================
-      // ダブルクリックされた要素が属する「意味・例文ブロック」を特定し、
-      // 同じブロック内の日本語訳を直接取得する
-      const contextualJa = findContextualJa(targetEl, cleanQuery);
-      if (contextualJa) {
-        results.push({ type: '文脈訳', text: contextualJa });
-      }
-    
-      // ========================================
-      // Step 3: 翻訳APIフォールバック（上記で解決しなかった場合のみ）
-      // ========================================
-      if (results.length === 0) {
-        const phrase = extractContextPhrase(cleanQuery, targetEl);
-        const translated = await translatePhrase(phrase);
+      // Step 2: 翻訳APIフォールバック（アプリ内未登録の一般単語のみ）
+      try {
+        const res = await fetch(
+          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanQuery)}&langpair=en|ja`
+        );
+        const data = await res.json();
+        let translated = '';
         
-        if (translated && !isTranslationInvalid(cleanQuery, translated)) {
-          results.push({ type: '翻訳', text: translated });
-        } else if (foundInApp) {
-          // API失敗時は単語登録訳にフォールバック（Step 1で拾えていても念のため）
-          results.push({ type: '単語登録訳', text: foundInApp.details[0]?.meaningJa || '訳データなし' });
-        } else {
-          results.push({ type: '翻訳', text: '辞書に未登録の単語です' });
+        if (data && data.responseData && data.responseData.translatedText) {
+          translated = data.responseData.translatedText.trim();
         }
+        
+        // 未翻訳チェック（APIが英単語をそのまま返してきた場合）
+        if (!translated || translated.toLowerCase().replace(/[.]/g, '') === cleanQuery) {
+          translated = '【日本語訳】アプリ内未登録（翻訳APIも未対応）';
+        } else {
+          translated = '【日本語訳】' + translated;
+        }
+        
+        showDictModal(queryWord, translated);
+        speakText(queryWord);
+      } catch (err) {
+        showDictModal(queryWord, '翻訳エラー：ネットワークまたはAPIの問題が発生しました');
+        speakText(queryWord);
       }
-    
-      // ========================================
-      // 表示フォーマットの構築
-      // ========================================
-      let displayText = '';
-      
-      if (results.length === 1) {
-        displayText = results[0].text;
-      } else {
-        // 複数情報源がある場合は両方表示（重複除外）
-        const uniqueTexts = [];
-        const seen = new Set();
-        results.forEach(r => {
-          if (!seen.has(r.text)) {
-            seen.add(r.text);
-            uniqueTexts.push(`【${r.type}】${r.text}`);
-          }
-        });
-        displayText = uniqueTexts.join('\n');
-      }
-    
-      showDictModal(matchedWord, displayText);
-      speakText(matchedWord);
     }
 
     /**

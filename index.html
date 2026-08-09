@@ -2424,68 +2424,175 @@
       lookupWordInApp(selectedText);
     });
 
-    // 修正版：文脈（例文や意味のフレーズ）を考慮して正確な日本語訳を取得する関数
+    // ============================================
+    // 修正①：文脈フレーズ抽出関数（新規追加）
+    // ============================================
+    /**
+     * テキスト中の対象単語の前後2〜3語を含む短いフレーズを抽出する。
+     * 長い例文・定義文全体を送ると翻訳精度が低下するため、単語周辺の
+     * コロケーション（固まり）のみを切り出す。
+     */
+    function extractContextPhrase(word, text) {
+      if (!text || !word) return word;
+      
+      // 大文字小文字を無視して位置を特定
+      const escapedWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`(^|[^a-zA-Z'-])${escapedWord}([^a-zA-Z'-]|$)`, 'i');
+      const match = text.match(regex);
+      
+      if (!match) return word;
+      
+      // 単語の開始・終了位置を正確に計算
+      const prefixLen = match[1] ? match[1].length : 0;
+      const wordStart = match.index + prefixLen;
+      const wordEnd = wordStart + word.length;
+      
+      // 前後のテキストを単語単位で分割し、前後3語ずつ取得
+      const beforePart = text.substring(0, wordStart).trim();
+      const afterPart = text.substring(wordEnd).trim();
+      
+      const beforeWords = beforePart.split(/\s+/).filter(w => w.length > 0).slice(-3);
+      const afterWords = afterPart.split(/\s+/).filter(w => w.length > 0).slice(0, 3);
+      
+      // フレーズを再構成（例: "make oneself familiar with a"）
+      const phrase = [...beforeWords, word, ...afterWords].join(' ').trim();
+      return phrase || word;
+    }
+    
+    // ============================================
+    // 修正②：翻訳品質チェック関数（新規追加）
+    // ============================================
+    /**
+     * 翻訳APIの結果が明らかに不適切かどうかを判定する。
+     * ・入力と同じ（未翻訳）
+     * ・英語単語がそのまま残っている
+     * ・既知の誤訳パターン（"full trust" 等）
+     */
+    function isTranslationInvalid(original, translated) {
+      if (!translated || translated === original) return true;
+      
+      const t = translated.toLowerCase().trim();
+      const o = original.toLowerCase().trim();
+      
+      // 1. 入力とほぼ同じ（未翻訳）
+      if (t === o || t.replace(/[.]/g, '') === o.replace(/[.]/g, '')) return true;
+      
+      // 2. 明らかな誤訳パターン（ブラックリスト）
+      const knownBadTranslations = ['full trust', 'ある程度信頼', 'to', 'of', 'the'];
+      if (knownBadTranslations.some(bad => t.includes(bad.toLowerCase()))) return true;
+      
+      // 3. 翻訳結果が英語のみ（日本語訳が含まれていない）
+      // 日本語の常用漢字・ひらがな・カタカナが含まれているか簡易チェック
+      const hasJapanese = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(translated);
+      if (!hasJapanese && translated.length > 2) return true;
+      
+      return false;
+    }
+    
+    // ============================================
+    // 修正③：lookupWordInApp 関数（全面書き換え）
+    // ============================================
+    /**
+     * ダブルクリックされた単語の辞書引き。
+     * ・文脈フレーズを優先して翻訳（例: give away → 手放す）
+     * ・単語の基本義はアプリ内データまたは単体翻訳で補完
+     * ・誤訳時は自動フォールバック
+     */
     async function lookupWordInApp(queryWord) {
       const cleanQuery = queryWord.toLowerCase().trim();
-      let foundMeaning = '';
       let matchedWord = queryWord;
-      let contextSentence = ''; // 周辺の文脈（フレーズや例文）
-
-      // 1. まずアプリ内の単語リストから完全一致を探す
+      let appMeaning = '';      // アプリ内の基本義
+      let contextPhrase = '';   // 文脈フレーズ
+      let phraseMeaning = '';   // 文脈フレーズの翻訳結果
+      let wordMeaning = '';     // 単語単体の翻訳結果
+    
+      // --- Step 1: アプリ内辞書検索（基本義の取得） ---
       for (const item of App.allWords) {
         if (item.word.toLowerCase() === cleanQuery) {
           matchedWord = item.word;
           if (item.details && item.details.length > 0) {
-            // アプリ内に登録されている意味を優先
-            foundMeaning = item.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
+            appMeaning = item.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
           }
           break;
         }
       }
-
-      // 2. アプリ内にない場合、ダブルクリックされた要素から「属している英文（文脈）」を自動取得する
-      if (!foundMeaning) {
-        const selection = window.getSelection();
-        if (selection && selection.anchorNode) {
-          let parentEl = selection.anchorNode.parentElement;
-          if (parentEl) {
-            contextSentence = parentEl.textContent || '';
-          }
-        }
-        
-        // 周辺の文脈が取れない場合は、現在のクエリ単語のみにする
-        if (!contextSentence || contextSentence.length > 150) {
-          contextSentence = queryWord;
-        }
-
-        document.getElementById('dict-word').textContent = matchedWord;
-        document.getElementById('dict-meaning').textContent = '🌐 文脈を解析して日本語訳を検索中...';
-        document.getElementById('dict-modal').classList.remove('hidden');
-
-        try {
-          // ★ 単語単体ではなく、文脈（フレーズ）ごと翻訳APIに送信することで意味のズレ（誤訳）を防ぐ
-          const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(contextSentence)}&langpair=en|ja`);
-          if (!res.ok) throw new Error('Translation failed');
-          
-          const data = await res.json();
-          if (data && data.responseData && data.responseData.translatedText) {
-            let translated = data.responseData.translatedText.trim();
-            foundMeaning = translated ? translated : '日本語訳が見つかりませんでした';
-          } else {
-            foundMeaning = '日本語訳の取得に失敗しました';
-          }
-        } catch (err) {
-          foundMeaning = 'ネット辞書検索エラー';
+    
+      // --- Step 2: 文脈（フレーズ）の取得 ---
+      const selection = window.getSelection();
+      if (selection && selection.anchorNode) {
+        let parentEl = selection.anchorNode.parentElement;
+        if (parentEl) {
+          const fullText = parentEl.textContent || '';
+          // 長いテキストの場合のみフレーズ抽出を実行
+          contextPhrase = extractContextPhrase(cleanQuery, fullText);
         }
       }
-
-      // 3. 常に「【日本語訳】」の正しいフォーマットでポップアップに表示
-      const formattedMeaning = `【日本語訳】 ${foundMeaning}`;
-
+      // 文脈が取得できなければ単語単体を使う
+      if (!contextPhrase) contextPhrase = cleanQuery;
+    
+      // --- Step 3: UI表示（検索中） ---
       document.getElementById('dict-word').textContent = matchedWord;
-      document.getElementById('dict-meaning').textContent = formattedMeaning;
+      document.getElementById('dict-meaning').textContent = '🌐 文脈に応じた日本語訳を検索中...';
       document.getElementById('dict-modal').classList.remove('hidden');
-
+    
+      try {
+        // --- Step 4: 文脈フレーズを翻訳 ---
+        const phraseRes = await fetch(
+          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(contextPhrase)}&langpair=en|ja`
+        );
+        const phraseData = await phraseRes.json();
+        if (phraseData && phraseData.responseData && phraseData.responseData.translatedText) {
+          phraseMeaning = phraseData.responseData.translatedText.trim();
+        }
+    
+        // --- Step 5: 単語単体の翻訳（フォールバック用） ---
+        // アプリ内に基本義があればそれを優先、なければAPIで翻訳
+        if (appMeaning) {
+          wordMeaning = appMeaning;
+        } else {
+          const wordRes = await fetch(
+            `https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanQuery)}&langpair=en|ja`
+          );
+          const wordData = await wordRes.json();
+          if (wordData && wordData.responseData && wordData.responseData.translatedText) {
+            wordMeaning = wordData.responseData.translatedText.trim();
+          }
+        }
+    
+        // --- Step 6: 品質チェックと統合 ---
+        const isPhraseBad = isTranslationInvalid(contextPhrase, phraseMeaning);
+        const isWordBad = isTranslationInvalid(cleanQuery, wordMeaning);
+    
+        let finalMeaning = '';
+    
+        if (!isPhraseBad && phraseMeaning !== wordMeaning) {
+          // 文脈訳が有効で、かつ単語訳と異なる場合は両方表示
+          finalMeaning = `【文脈訳】${phraseMeaning}\n【単語訳】${wordMeaning || 'ー'}`;
+        } else if (!isWordBad) {
+          // 文脈訳が不適切なら単語訳のみ
+          finalMeaning = wordMeaning;
+        } else if (!isPhraseBad) {
+          // 単語訳も不適切だが文脈訳があるなら文脈訳のみ
+          finalMeaning = phraseMeaning;
+        } else {
+          // 両方不適切な場合はアプリ内データ or 原文表示
+          finalMeaning = appMeaning || `【日本語訳】${phraseMeaning || wordMeaning || '取得できませんでした'}`;
+        }
+    
+        // --- Step 7: 結果表示 ---
+        document.getElementById('dict-word').textContent = matchedWord;
+        document.getElementById('dict-meaning').textContent = finalMeaning;
+        document.getElementById('dict-modal').classList.remove('hidden');
+    
+      } catch (err) {
+        // --- エラーフォールバック ---
+        console.error('Dictionary lookup error:', err);
+        const fallback = appMeaning || 'ネット辞書検索エラー（アプリ内データのみ表示）';
+        document.getElementById('dict-word').textContent = matchedWord;
+        document.getElementById('dict-meaning').textContent = fallback;
+        document.getElementById('dict-modal').classList.remove('hidden');
+      }
+    
       speakText(matchedWord);
     }
 

@@ -2477,52 +2477,30 @@
     }
     
     /**
-     * ダブルクリック辞書引き（最終版）
-     * 
-     * 動作：
-     * 1. クリックされた要素が属する「単語カードブロック」を特定（data-owner-word）
-     * 2. そのカードの持ち主（親単語）の日本語訳を「ただ一つ」表示
-     * 3. 親単語が特定できなければ、現在表示中の単語の訳を表示
-     * 
-     * ※ 翻訳APIは使いません。App.allWords内の正確なデータのみ使用。
+     * ダブルクリック・クリックされた個別単語の辞書引き（修正版）
      */
-    function lookupWordInApp(queryWord, targetEl) {
-      let ownerWord = null;
-    
-      // Step 1: クリックされた要素から data-owner-word を持つ親を探す
-      if (targetEl) {
-        const ownerBlock = targetEl.closest('[data-owner-word]');
-        if (ownerBlock) {
-          ownerWord = ownerBlock.dataset.ownerWord;
-        }
-      }
-    
-      // Step 2: data属性で取れなければ、現在表示中の単語をフォールバック
-      if (!ownerWord) {
-        const quizVisible = !document.getElementById('quiz-container').classList.contains('hidden');
-        const testVisible = !document.getElementById('test-container').classList.contains('hidden');
-        
-        if (quizVisible && App.queue[App.index]) {
-          ownerWord = App.queue[App.index].word;
-        } else if (testVisible && App.testQueue[App.testIndex]) {
-          ownerWord = App.testQueue[App.testIndex].word;
-        }
-      }
-    
-      // Step 3: 親単語の日本語訳を取得して表示
-      if (ownerWord) {
-        const ownerItem = App.allWords.find(w => w.word === ownerWord);
-        if (ownerItem && ownerItem.details && ownerItem.details.length > 0) {
-          const meaning = ownerItem.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
-          showDictModal(queryWord, meaning);
-          speakText(queryWord);
-          return;
-        }
-      }
-    
-      // Step 4: 万が一見つからない場合（通常ここには来ない）
-      showDictModal(queryWord, '訳データが見つかりません');
+    async function lookupWordInApp(queryWord, targetEl) {
+      // 1. まずモーダルを開いてローディング表示と音声再生を行う
+      showDictModal(queryWord, '翻訳中...');
       speakText(queryWord);
+
+      // 2. 翻訳APIを使用して、クリックされた個別単語（queryWord）の意味を取得する
+      let meaning = await translateWordWithApi(queryWord);
+
+      // 3. APIで取得できなかった場合のフォールバック（もしアプリ内の単語データに一致するものがあればそこから取得）
+      if (!meaning) {
+        const matchedWordItem = App.allWords.find(w => w.word.toLowerCase() === queryWord.toLowerCase());
+        if (matchedWordItem && matchedWordItem.details && matchedWordItem.details.length > 0) {
+          meaning = matchedWordItem.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
+        }
+      }
+
+      // 4. 最終的な意味を表示
+      if (meaning) {
+        showDictModal(queryWord, meaning);
+      } else {
+        showDictModal(queryWord, '訳データが見つかりませんでした');
+      }
     }
     
     function showDictModal(word, meaning) {

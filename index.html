@@ -580,7 +580,25 @@
         </button>
       </div>
     </div>
-
+    <!-- ✨ 追加：ダブルクリック単語辞書ポップアップモーダル -->
+    <div id="dict-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4 hidden">
+      <div class="bg-white rounded-2xl shadow-2xl p-5 max-w-xs w-full space-y-3 border border-slate-200 text-center relative animate-in fade-in zoom-in duration-200">
+        <div class="flex justify-between items-center border-b pb-2">
+          <span class="text-xs font-bold text-indigo-600 flex items-center gap-1">📖 クイック辞書</span>
+          <button onclick="closeDictModal()" class="text-slate-400 hover:text-slate-600 text-lg font-bold">✕</button>
+        </div>
+        <div class="space-y-1">
+          <div class="flex items-center justify-center space-x-2">
+            <h3 id="dict-word" class="text-xl font-extrabold text-slate-800">Word</h3>
+            <button onclick="speakDictWord()" class="text-sm bg-indigo-50 hover:bg-indigo-100 text-indigo-600 p-1.5 rounded-full transition">🔊</button>
+          </div>
+          <p id="dict-meaning" class="text-sm font-bold text-indigo-700 bg-indigo-50/70 py-2.5 px-3 rounded-xl border border-indigo-100"></p>
+        </div>
+        <button onclick="closeDictModal()" class="w-full bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2 rounded-xl text-xs transition">
+          閉じる (Esc)
+        </button>
+      </div>
+    </div>
   </main>
 
   <footer class="text-center py-3 text-xs text-slate-400">
@@ -2349,9 +2367,85 @@
       if (chk) chk.checked = App.tts.pronounceCheckEnabled;
     }
 
+    // ✨ 追加：ダブルクリック時の処理
+    document.addEventListener('dblclick', (e) => {
+      const selection = window.getSelection();
+      let selectedText = selection.toString().trim();
+      
+      // 記号や不要な文字を除去してクリーンアップ
+      selectedText = selectedText.replace(/^[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+/,"")
+                                   .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+$/,"")
+                                   .trim();
+
+      if (!selectedText || selectedText.split(/\s+/).length > 2) return; // 2単語以上の長文選択は無視
+
+      lookupWordInApp(selectedText);
+    });
+
+    function lookupWordInApp(queryWord) {
+      const cleanQuery = queryWord.toLowerCase();
+      let foundMeaning = '';
+      let matchedWord = queryWord;
+
+      // 1. まずアプリ内の登録単語データから完全一致または原形一致を探す
+      for (const item of App.allWords) {
+        if (item.word.toLowerCase() === cleanQuery) {
+          matchedWord = item.word;
+          if (item.details && item.details.length > 0) {
+            foundMeaning = item.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
+          }
+          break;
+        }
+      }
+
+      // 2. 見つからない場合、詳細データ（意味や例文のデータベース）内も幅広く検索
+      if (!foundMeaning) {
+        for (const item of App.allWords) {
+          if (item.details && item.details.length > 0) {
+            for (const d of item.details) {
+              // 例文や意味の中に含まれているかチェック
+              if (item.word.toLowerCase().includes(cleanQuery) || 
+                  (d.meaningEn && d.meaningEn.toLowerCase().includes(cleanQuery))) {
+                matchedWord = item.word;
+                foundMeaning = d.meaningJa;
+                break;
+              }
+            }
+          }
+          if (foundMeaning) break;
+        }
+      }
+
+      // 3. それでも見つからない場合のフォールバック
+      if (!foundMeaning) {
+        foundMeaning = '（アプリ内辞書に未登録の単語です。発音を確認できます）';
+      }
+
+      // モーダルに表示して自動発音
+      document.getElementById('dict-word').textContent = matchedWord;
+      document.getElementById('dict-meaning').textContent = foundMeaning;
+      document.getElementById('dict-modal').classList.remove('hidden');
+
+      speakText(matchedWord);
+    }
+
+    function closeDictModal() {
+      document.getElementById('dict-modal').classList.add('hidden');
+    }
+
+    function speakDictWord() {
+      const word = document.getElementById('dict-word').textContent;
+      if (word) speakText(word);
+    }
+
     function setupKeyListeners() {
       window.addEventListener('keydown', e => {
         if (e.isComposing) return;
+    
+        // ✨ 追加：Escキーでクイック辞書モーダルを閉じる
+        if (e.key === 'Escape') {
+          closeDictModal();
+        }
     
         const pronModal = document.getElementById('pronunciation-modal');
         if (pronModal && !pronModal.classList.contains('hidden')) {

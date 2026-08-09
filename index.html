@@ -2424,52 +2424,47 @@
       lookupWordInApp(selectedText);
     });
 
+    // 修正版：文脈（例文や意味のフレーズ）を考慮して正確な日本語訳を取得する関数
     async function lookupWordInApp(queryWord) {
       const cleanQuery = queryWord.toLowerCase().trim();
       let foundMeaning = '';
       let matchedWord = queryWord;
+      let contextSentence = ''; // 周辺の文脈（フレーズや例文）
 
-      // 1. アプリ内の単語リストから完全一致を探す
+      // 1. まずアプリ内の単語リストから完全一致を探す
       for (const item of App.allWords) {
         if (item.word.toLowerCase() === cleanQuery) {
           matchedWord = item.word;
           if (item.details && item.details.length > 0) {
+            // アプリ内に登録されている意味を優先
             foundMeaning = item.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
           }
           break;
         }
       }
 
-      // 2. 活用語尾（s, ed, ing等）を外した原形で探す
+      // 2. アプリ内にない場合、ダブルクリックされた要素から「属している英文（文脈）」を自動取得する
       if (!foundMeaning) {
-        let baseQuery = cleanQuery;
-        if (baseQuery.endsWith('ies')) baseQuery = baseQuery.slice(0, -3) + 'y';
-        else if (baseQuery.endsWith('es')) baseQuery = baseQuery.slice(0, -2);
-        else if (baseQuery.endsWith('ed')) baseQuery = baseQuery.slice(0, -2);
-        else if (baseQuery.endsWith('ing')) baseQuery = baseQuery.slice(0, -3);
-        else if (baseQuery.endsWith('s') || baseQuery.endsWith('d')) baseQuery = baseQuery.slice(0, -1);
-
-        if (baseQuery !== cleanQuery) {
-          for (const item of App.allWords) {
-            if (item.word.toLowerCase() === baseQuery) {
-              matchedWord = item.word;
-              if (item.details && item.details.length > 0) {
-                foundMeaning = item.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
-              }
-              break;
-            }
+        const selection = window.getSelection();
+        if (selection && selection.anchorNode) {
+          let parentEl = selection.anchorNode.parentElement;
+          if (parentEl) {
+            contextSentence = parentEl.textContent || '';
           }
         }
-      }
+        
+        // 周辺の文脈が取れない場合は、現在のクエリ単語のみにする
+        if (!contextSentence || contextSentence.length > 150) {
+          contextSentence = queryWord;
+        }
 
-      // 3. アプリ内にない場合は外部翻訳APIで取得
-      if (!foundMeaning) {
         document.getElementById('dict-word').textContent = matchedWord;
-        document.getElementById('dict-meaning').textContent = '🌐 ネットから日本語の意味を検索中...';
+        document.getElementById('dict-meaning').textContent = '🌐 文脈を解析して日本語訳を検索中...';
         document.getElementById('dict-modal').classList.remove('hidden');
 
         try {
-          const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanQuery)}&langpair=en|ja`);
+          // ★ 単語単体ではなく、文脈（フレーズ）ごと翻訳APIに送信することで意味のズレ（誤訳）を防ぐ
+          const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(contextSentence)}&langpair=en|ja`);
           if (!res.ok) throw new Error('Translation failed');
           
           const data = await res.json();
@@ -2484,7 +2479,7 @@
         }
       }
 
-      // ★ 必ず「【日本語訳】」をプレフィックスとして付けてポップアップに反映する
+      // 3. 常に「【日本語訳】」の正しいフォーマットでポップアップに表示
       const formattedMeaning = `【日本語訳】 ${foundMeaning}`;
 
       document.getElementById('dict-word').textContent = matchedWord;

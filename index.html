@@ -2367,17 +2367,43 @@
       if (chk) chk.checked = App.tts.pronounceCheckEnabled;
     }
 
-    // ✨ 追加：ダブルクリック時の処理
+    // ✨ 改善：ダブルクリック時の位置自動抽出（onclickとの競合や選択の手間を解消）
     document.addEventListener('dblclick', (e) => {
+      let selectedText = '';
+      
+      // 1. 通常の選択文字列をチェック
       const selection = window.getSelection();
-      let selectedText = selection.toString().trim();
+      if (selection && selection.toString().trim().length > 0) {
+        selectedText = selection.toString().trim();
+      } 
+      
+      // 2. 選択されていない場合、クリックされた座標から単語を自動取得
+      if (!selectedText && document.caretRangeFromPoint) {
+        const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+        if (range && range.startContainer.nodeType === Node.TEXT_NODE) {
+          const textNode = range.startContainer;
+          const text = textNode.nodeValue;
+          let offset = range.startOffset;
+          
+          // 単語の境界（アルファベット文字）を前後に広げて単語を切り出す
+          let start = offset;
+          while (start > 0 && /\w/.test(text.charAt(start - 1))) {
+            start--;
+          }
+          let end = offset;
+          while (end < text.length && /\w/.test(text.charAt(end))) {
+            end++;
+          }
+          selectedText = text.substring(start, end).trim();
+        }
+      }
       
       // 記号や不要な文字を除去してクリーンアップ
       selectedText = selectedText.replace(/^[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+/,"")
                                    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+$/,"")
                                    .trim();
 
-      if (!selectedText || selectedText.split(/\s+/).length > 2) return; // 2単語以上の長文選択は無視
+      if (!selectedText || selectedText.split(/\s+/).length > 2) return; // 2単語以上は無視
 
       lookupWordInApp(selectedText);
     });

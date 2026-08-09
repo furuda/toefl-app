@@ -522,15 +522,39 @@
           <button id="toggle-translation-btn" onclick="toggleTestTranslation()" class="w-full py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-semibold transition flex items-center justify-center space-x-1">
             <span>💡 日本語訳を表示する</span>
           </button>
-
-          <div id="test-translation-box" class="hidden mt-2 bg-indigo-50/70 p-3 rounded-xl border border-indigo-100 space-y-1.5 text-xs">
+          <div id="test-translation-box" class="hidden mt-2 bg-indigo-50/70 p-3 rounded-xl border border-indigo-100 space-y-2 text-xs">
+            <!-- 単語の日本語の意味 -->
             <div class="flex items-start space-x-1.5">
-              <span class="font-bold text-indigo-700 whitespace-nowrap">💡 単語の意味:</span>
-              <span id="test-meaning-ja" class="text-slate-800 font-semibold"></span>
+              <span class="font-bold text-indigo-700 whitespace-nowrap">
+                💡 単語の意味:
+              </span>
+              <span
+                id="test-meaning-ja"
+                class="text-slate-800 font-semibold select-text"
+              ></span>
             </div>
-            <div id="test-example-ja-container" class="flex items-start space-x-1.5 pt-1.5 border-t border-indigo-100">
-              <span class="font-bold text-indigo-700 whitespace-nowrap">💬 例文の訳:</span>
-              <span id="test-example-ja" class="text-slate-600 font-medium"></span>
+            <!-- 単語の英文意味 -->
+            <div class="flex items-start space-x-1.5 pt-1.5 border-t border-indigo-100">
+              <span class="font-bold text-indigo-700 whitespace-nowrap">
+                📖 英文意味:
+              </span>
+              <span
+                id="test-meaning-en"
+                class="text-slate-700 font-medium italic select-text"
+              ></span>
+            </div>
+            <!-- 例文の日本語訳 -->
+            <div
+              id="test-example-ja-container"
+              class="flex items-start space-x-1.5 pt-1.5 border-t border-indigo-100"
+            >
+              <span class="font-bold text-indigo-700 whitespace-nowrap">
+                💬 例文の訳:
+              </span>
+              <span
+                id="test-example-ja"
+                class="text-slate-600 font-medium select-text"
+              ></span>
             </div>
           </div>
         </div>
@@ -1900,9 +1924,11 @@
       exampleEl.innerHTML = highlightWordInExample(detail.exampleEn, item.word);
       exampleEl.dataset.ownerWord = item.word; // ★ 追加
     
-      document.getElementById('test-meaning-ja').textContent = detail.meaningJa || 'ー';
+      document.getElementById('test-meaning-ja').textContent = detail.meaningJa || 'ー';   
+      // ★ 英文意味を表示
+      document.getElementById('test-meaning-en').textContent = detail.meaningEn || 'ー';
       document.getElementById('test-example-ja').textContent = detail.exampleJa || 'ー';
-    
+
       document.getElementById('test-translation-box').classList.add('hidden');
       document.getElementById('toggle-translation-btn').classList.remove('hidden');
       document.getElementById('test-next-container').classList.add('hidden');

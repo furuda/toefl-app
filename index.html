@@ -1307,6 +1307,7 @@
 
           const item = document.createElement('div');
           item.className = 'p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1';
+          item.dataset.parentWord = w.word; // ★ 追加
           item.innerHTML = `
             <div class="flex items-center justify-between">
               <div class="flex items-center space-x-2">
@@ -1549,8 +1550,10 @@
       // --- 1. 例文の表示処理（DOM操作で安全性向上） ---
       if (item.details && item.details.length > 0) {
         item.details.forEach(d => {
+          // --- 1. details ブロック（意味・例文）---
           const block = document.createElement('div');
           block.className = 'bg-white/80 p-2.5 rounded-xl border border-indigo-100 text-xs space-y-1';
+          block.dataset.parentWord = item.word; // ★ 追加
     
           let html = `<div class="font-bold text-slate-800">${escapeHtml(d.meaningJa)}</div>`;
           if (d.meaningEn) {
@@ -1588,8 +1591,10 @@
     
       // --- 2. 派生語の表示処理（DOM操作で安全性向上） ---
       if (item.derived && item.derived.length > 0) {
+        // --- 2. 派生語ブロック ---
         const derivedBlock = document.createElement('div');
         derivedBlock.className = 'bg-amber-50/80 p-2.5 rounded-xl border border-amber-200 text-xs space-y-1 mt-2';
+        derivedBlock.dataset.parentWord = item.word; // ★ 追加
         
         const header = document.createElement('div');
         header.className = 'font-bold text-amber-800 text-[11px]';
@@ -1876,6 +1881,7 @@
       
       const exampleEl = document.getElementById('test-example');
       exampleEl.innerHTML = highlightWordInExample(detail.exampleEn, item.word);
+      exampleEl.dataset.parentWord = item.word; // ★ 追加
     
       document.getElementById('test-meaning-ja').textContent = detail.meaningJa || 'ー';
       document.getElementById('test-example-ja').textContent = detail.exampleJa || 'ー';
@@ -2367,37 +2373,29 @@
       if (chk) chk.checked = App.tts.pronounceCheckEnabled;
     }
 
-    // ============================================
-    // ダブルクリックイベントリスナー（修正版）
-    // ============================================
     document.addEventListener('dblclick', (e) => {
       let selectedText = '';
       
-      // 1. ユーザーがドラッグ選択しているテキストを最優先
       const selection = window.getSelection();
       if (selection && selection.toString().trim().length > 0) {
         selectedText = selection.toString().trim();
       }
       
-      // 2. 選択がなければ、クリック位置の単語を caretRangeFromPoint で取得
-      if (!selectedText) {
-        if (document.caretRangeFromPoint) {
-          const range = document.caretRangeFromPoint(e.clientX, e.clientY);
-          if (range && range.startContainer && range.startContainer.nodeType === Node.TEXT_NODE) {
-            const text = range.startContainer.nodeValue;
-            let offset = range.startOffset;
-            if (offset > text.length) offset = text.length;
-            
-            let start = offset;
-            while (start > 0 && /[a-zA-Z\-']/.test(text.charAt(start - 1))) start--;
-            let end = offset;
-            while (end < text.length && /[a-zA-Z\-']/.test(text.charAt(end))) end++;
-            selectedText = text.substring(start, end).trim();
-          }
+      if (!selectedText && document.caretRangeFromPoint) {
+        const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+        if (range && range.startContainer && range.startContainer.nodeType === Node.TEXT_NODE) {
+          const text = range.startContainer.nodeValue;
+          let offset = range.startOffset;
+          if (offset > text.length) offset = text.length;
+          
+          let start = offset;
+          while (start > 0 && /[a-zA-Z\-']/.test(text.charAt(start - 1))) start--;
+          let end = offset;
+          while (end < text.length && /[a-zA-Z\-']/.test(text.charAt(end))) end++;
+          selectedText = text.substring(start, end).trim();
         }
       }
       
-      // 3. 前後の記号を除去
       selectedText = selectedText
         .replace(/^[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+/, '')
         .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+$/, '')
@@ -2405,8 +2403,7 @@
     
       if (!selectedText) return;
       
-      // ★ 第2引数（e.target）を渡さず、単語単体で検索
-      lookupWordInApp(selectedText);
+      lookupWordInApp(selectedText, e.target); // ★ e.target を渡す
     });
 
     /**
@@ -2485,65 +2482,105 @@
       document.getElementById('dict-modal').classList.remove('hidden');
     }
     
-    // ============================================
-    // ダブルクリック辞書機能（根本修正版）
-    // ============================================
-    
     /**
-     * ダブルクリックされた単語の辞書引き
+     * ダブルクリック辞書引き（文脈対応版）
      * 
-     * 【修正方針】
-     * 1. App.allWords を「単語完全一致」で検索 → 見つかればその日本語訳を即表示
-     * 2. アプリ内にない場合のみ、翻訳APIで単語単体を翻訳
-     * 
-     * ※ 前回の「親ブロックから .font-bold.text-slate-800 を探す」処理は削除。
-     *   これが「orientのfamiliar」を押したのに orient の意味が出る原因だった。
+     * 優先順位：
+     * 1. 親単語（クリックされたブロックの持ち主）の日本語訳 → 【文脈訳】
+     * 2. クリックされた単語自身の日本語訳 → 【単語訳】
+     * 3. 上記どちらも無い場合のみ翻訳API → 【翻訳】
      */
-    async function lookupWordInApp(queryWord) {
+    async function lookupWordInApp(queryWord, targetEl) {
       const cleanQuery = queryWord.toLowerCase().trim();
+      let parentWord = null;
+      let parentMeaning = null;
+      let selfMeaning = null;
     
-      // Step 1: アプリ内辞書検索（最優先・最確実）
-      // App.allWords の中から「ダブルクリックした単語そのもの」を探す
-      const foundInApp = App.allWords.find(item => 
-        item.word.toLowerCase() === cleanQuery
-      );
-      
-      if (foundInApp && foundInApp.details && foundInApp.details.length > 0) {
-        const appMeanings = foundInApp.details
-          .map(d => d.meaningJa)
-          .filter(Boolean)
-          .join(' / ');
-        
-        showDictModal(foundInApp.word, appMeanings);
-        speakText(foundInApp.word);
-        return; // ← アプリ内で見つかればここで終了。親単語の意味を探しに行かない
+      // --- Step 1: 親単語（文脈）の特定 ---
+      // ① data属性から親ブロックを特定
+      if (targetEl) {
+        const parentBlock = targetEl.closest('[data-parent-word]');
+        if (parentBlock) {
+          parentWord = parentBlock.dataset.parentWord;
+        }
       }
     
-      // Step 2: 翻訳APIフォールバック（アプリ内未登録の一般単語のみ）
+      // ② data属性で取れなければ、現在表示中の単語をフォールバック
+      if (!parentWord) {
+        const quizVisible = !document.getElementById('quiz-container').classList.contains('hidden');
+        const testVisible = !document.getElementById('test-container').classList.contains('hidden');
+        if (quizVisible && App.queue[App.index]) {
+          parentWord = App.queue[App.index].word;
+        } else if (testVisible && App.testQueue[App.testIndex]) {
+          parentWord = App.testQueue[App.testIndex].word;
+        }
+      }
+    
+      // --- Step 2: 親単語の日本語訳を取得（文脈訳）---
+      if (parentWord) {
+        const parentItem = App.allWords.find(w => w.word === parentWord);
+        if (parentItem && parentItem.details && parentItem.details.length > 0) {
+          parentMeaning = parentItem.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
+        }
+      }
+    
+      // --- Step 3: ダブルクリックされた単語自身の日本語訳を取得（単語訳）---
+      const selfItem = App.allWords.find(w => w.word.toLowerCase() === cleanQuery);
+      if (selfItem && selfItem.details && selfItem.details.length > 0) {
+        selfMeaning = selfItem.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
+      }
+    
+      // --- Step 4: 表示内容の構築 ---
+      const lines = [];
+      const added = new Set();
+    
+      // 文脈訳（親単語の意味）を最優先
+      // ※ 親単語とクリック単語が同じ場合は重複するのでスキップ
+      if (parentMeaning && parentWord && parentWord.toLowerCase() !== cleanQuery) {
+        lines.push(`【文脈訳（${parentWord}）】${parentMeaning}`);
+        added.add(parentMeaning);
+      }
+    
+      // 単語訳（クリックされた単語自身の意味）
+      if (selfMeaning && !added.has(selfMeaning)) {
+        lines.push(`【単語訳】${selfMeaning}`);
+        added.add(selfMeaning);
+      }
+    
+      // --- Step 5: 両方見つからない場合のみ翻訳API ---
+      if (lines.length === 0) {
+        const translated = await translateWordWithApi(cleanQuery);
+        if (translated) {
+          lines.push(`【翻訳】${translated}`);
+        } else {
+          lines.push('【日本語訳】辞書に未登録の単語です');
+        }
+      }
+    
+      showDictModal(queryWord, lines.join('\n'));
+      speakText(queryWord);
+    }
+
+    /**
+     * 翻訳API呼び出し（単語単体・緩和版）
+     * 「give」→「Give」などの大文字小文字違いは未翻訳とみなさない
+     */
+    async function translateWordWithApi(word) {
       try {
         const res = await fetch(
-          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanQuery)}&langpair=en|ja`
+          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(word)}&langpair=en|ja`
         );
         const data = await res.json();
-        let translated = '';
-        
         if (data && data.responseData && data.responseData.translatedText) {
-          translated = data.responseData.translatedText.trim();
+          const translated = data.responseData.translatedText.trim();
+          // 入力と完全に同じ（大文字小文字含む）のみ未翻訳とみなす
+          if (translated === word) return null;
+          return translated;
         }
-        
-        // 未翻訳チェック（APIが英単語をそのまま返してきた場合）
-        if (!translated || translated.toLowerCase().replace(/[.]/g, '') === cleanQuery) {
-          translated = '【日本語訳】アプリ内未登録（翻訳APIも未対応）';
-        } else {
-          translated = '【日本語訳】' + translated;
-        }
-        
-        showDictModal(queryWord, translated);
-        speakText(queryWord);
       } catch (err) {
-        showDictModal(queryWord, '翻訳エラー：ネットワークまたはAPIの問題が発生しました');
-        speakText(queryWord);
+        console.error('Translation API error:', err);
       }
+      return null;
     }
 
     /**

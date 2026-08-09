@@ -2367,53 +2367,68 @@
       if (chk) chk.checked = App.tts.pronounceCheckEnabled;
     }
 
-    // ✨ 改善：ダブルクリック時の位置自動抽出（onclickとの競合や選択の手間を解消）
+    // ✨ 改善：復習画面のレイアウト構造に対応した高精度なダブルクリック単語検知
     document.addEventListener('dblclick', (e) => {
       let selectedText = '';
       
-      // 1. 通常の選択文字列をチェック
+      // 1. ユーザーが明示的に範囲選択している場合はそれを優先
       const selection = window.getSelection();
       if (selection && selection.toString().trim().length > 0) {
         selectedText = selection.toString().trim();
       } 
       
-      // 2. 選択されていない場合、クリックされた座標から単語を自動取得
+      // 2. 選択されていない場合、クリック座標からターゲット単語を正確に逆引き
       if (!selectedText && document.caretRangeFromPoint) {
         const range = document.caretRangeFromPoint(e.clientX, e.clientY);
-        if (range && range.startContainer.nodeType === Node.TEXT_NODE) {
-          const textNode = range.startContainer;
-          const text = textNode.nodeValue;
-          let offset = range.startOffset;
+        if (range && range.startContainer) {
+          let textNode = range.startContainer;
           
-          // 単語の境界（アルファベット文字）を前後に広げて単語を切り出す
-          let start = offset;
-          while (start > 0 && /\w/.test(text.charAt(start - 1))) {
-            start--;
+          // テキストノード以外（要素自体など）をクリックしている場合の安全なフォールバック
+          if (textNode.nodeType !== Node.TEXT_NODE && textNode.childNodes.length > 0) {
+            // 最も近いテキストノードを探す
+            for (let i = 0; i < textNode.childNodes.length; i++) {
+              if (textNode.childNodes[i].nodeType === Node.TEXT_NODE) {
+                textNode = textNode.childNodes[i];
+                break;
+              }
+            }
           }
-          let end = offset;
-          while (end < text.length && /\w/.test(text.charAt(end))) {
-            end++;
+          
+          if (textNode.nodeType === Node.TEXT_NODE) {
+            const text = textNode.nodeValue;
+            let offset = range.startOffset;
+            if (offset > text.length) offset = text.length;
+            
+            let start = offset;
+            while (start > 0 && /[a-zA-Z\-]/.test(text.charAt(start - 1))) {
+              start--;
+            }
+            let end = offset;
+            while (end < text.length && /[a-zA-Z\-]/.test(text.charAt(end))) {
+              end++;
+            }
+            selectedText = text.substring(start, end).trim();
           }
-          selectedText = text.substring(start, end).trim();
         }
       }
       
-      // 記号や不要な文字を除去してクリーンアップ
+      // 記号や不要な文字を除去
       selectedText = selectedText.replace(/^[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+/,"")
                                    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+$/,"")
                                    .trim();
 
-      if (!selectedText || selectedText.split(/\s+/).length > 2) return; // 2単語以上は無視
+      if (!selectedText || selectedText.split(/\s+/).length > 2) return;
 
       lookupWordInApp(selectedText);
     });
 
-    function lookupWordInApp(queryWord) {
+    // ✨ 改善：アプリ内検索 ＋ 未登録時はオンライン辞書API（Free Dictionary API）でネット検索
+    async function lookupWordInApp(queryWord) {
       const cleanQuery = queryWord.toLowerCase();
       let foundMeaning = '';
       let matchedWord = queryWord;
 
-      // 1. まずアプリ内の登録単語データから完全一致または原形一致を探す
+      // 1. アプリ内登録単語データから完全一致または原形一致を探す
       for (const item of App.allWords) {
         if (item.word.toLowerCase() === cleanQuery) {
           matchedWord = item.word;
@@ -2424,30 +2439,33 @@
         }
       }
 
-      // 2. 見つからない場合、詳細データ（意味や例文のデータベース）内も幅広く検索
+      // 2. アプリ内に無い場合、外部の無料オンライン辞書API（Free Dictionary API）でネット検索
       if (!foundMeaning) {
-        for (const item of App.allWords) {
-          if (item.details && item.details.length > 0) {
-            for (const d of item.details) {
-              // 例文や意味の中に含まれているかチェック
-              if (item.word.toLowerCase().includes(cleanQuery) || 
-                  (d.meaningEn && d.meaningEn.toLowerCase().includes(cleanQuery))) {
-                matchedWord = item.word;
-                foundMeaning = d.meaningJa;
-                break;
-              }
-            }
+        document.getElementById('dict-word').textContent = matchedWord;
+        document.getElementById('dict-meaning').textContent = '🌐 ネット辞書から検索中...';
+        document.getElementById('dict-modal').classList.remove('hidden');
+
+        try {
+          const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(cleanQuery)}`);
+          if (!res.ok) throw new Error('Not found');
+          
+          const data = await res.json();
+          if (data && data.length > 0 && data[0].meanings) {
+            // 最初の定義や品詞情報を抽出
+            const firstMeaning = data[0].meanings[0];
+            const partOfSpeech = firstMeaning.partOfSpeech || '';
+            const definition = firstMeaning.definitions && firstMeaning.definitions[0] ? firstMeaning.definitions[0].definition : '';
+            
+            foundMeaning = `[${partOfSpeech}] ${definition}`;
+          } else {
+            foundMeaning = '（オンライン辞書にも該当する単語が見つかりませんでした）';
           }
-          if (foundMeaning) break;
+        } catch (err) {
+          foundMeaning = '（アプリ内・ネット辞書ともに未登録の単語です。音声で発音を確認できます）';
         }
       }
 
-      // 3. それでも見つからない場合のフォールバック
-      if (!foundMeaning) {
-        foundMeaning = '（アプリ内辞書に未登録の単語です。発音を確認できます）';
-      }
-
-      // モーダルに表示して自動発音
+      // モーダルに結果を表示して自動発音
       document.getElementById('dict-word').textContent = matchedWord;
       document.getElementById('dict-meaning').textContent = foundMeaning;
       document.getElementById('dict-modal').classList.remove('hidden');

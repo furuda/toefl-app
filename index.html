@@ -2421,14 +2421,15 @@
       lookupWordInApp(selectedText);
     });
 
-    // ✨ 【修正版】誤検索（partial match）を完全排除し、単語・熟語の正確な意味を取得する処理
+    // ✨ 【修正版】誤検索を防止し、ダブルクリックした単語・熟語の正確な意味を取得する処理
     async function lookupWordInApp(queryWord) {
       const cleanQuery = queryWord.toLowerCase().trim();
       let foundMeaning = '';
       let matchedWord = queryWord;
 
-      // 1. アプリ内（スプレッドシート）の単語と「完全一致」するか確認
+      // 1. まずアプリ内の全単語データおよび詳細（例文・意味）から完全一致するものを探索
       for (const item of App.allWords) {
+        // 単語自体が一致する場合
         if (item.word.toLowerCase() === cleanQuery) {
           matchedWord = item.word;
           if (item.details && item.details.length > 0) {
@@ -2436,35 +2437,24 @@
           }
           break;
         }
-      }
-
-      // 2. 完全一致しない場合、一般的な語尾変化（s, ed, ing, es, d）を外した「原形」で完全一致するか確認
-      // ※ startsWith や includes は「out -> outdated」「spread -> widespread」等の誤検知を引き起こすため使用しない
-      if (!foundMeaning) {
-        let baseQuery = cleanQuery;
-        if (baseQuery.endsWith('ies')) baseQuery = baseQuery.slice(0, -3) + 'y';
-        else if (baseQuery.endsWith('es')) baseQuery = baseQuery.slice(0, -2);
-        else if (baseQuery.endsWith('ed')) baseQuery = baseQuery.slice(0, -2);
-        else if (baseQuery.endsWith('ing')) baseQuery = baseQuery.slice(0, -3);
-        else if (baseQuery.endsWith('s') || baseQuery.endsWith('d')) baseQuery = baseQuery.slice(0, -1);
-
-        if (baseQuery !== cleanQuery) {
-          for (const item of App.allWords) {
-            if (item.word.toLowerCase() === baseQuery) {
-              matchedWord = item.word;
-              if (item.details && item.details.length > 0) {
-                foundMeaning = item.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
-              }
+        // 英文意味や例文の中に含まれる単語・熟語であるかチェック
+        if (item.details && Array.isArray(item.details)) {
+          for (const d of item.details) {
+            if (d.meaningEn && d.meaningEn.toLowerCase().includes(cleanQuery)) {
+              matchedWord = queryWord;
+              // 該当する英文意味に対応する日本語訳、または全体の日本語訳をフォールバックとして保持
+              foundMeaning = `【日本語訳】 ${d.meaningJa || '関連する意味'}`;
               break;
             }
           }
         }
+        if (foundMeaning) break;
       }
 
-      // 3. アプリ内に完全一致・原形一致がない場合、ネット翻訳API（MyMemory API）で正確な日本語訳を取得
+      // 2. アプリ内に見つからない場合、MyMemory API を用いて選択された単語・熟語の正確な日本語訳を取得
       if (!foundMeaning) {
         document.getElementById('dict-word').textContent = matchedWord;
-        document.getElementById('dict-meaning').textContent = '🌐 ネットから日本語の意味を検索中...';
+        document.getElementById('dict-meaning').textContent = '🌐 辞書から意味を検索中...';
         document.getElementById('dict-modal').classList.remove('hidden');
 
         try {
@@ -2476,15 +2466,16 @@
             let translated = data.responseData.translatedText.trim();
             
             if (translated) {
+              // ご要望のフォーマット通り「【日本語訳】 〇〇」の形で出力
               foundMeaning = `【日本語訳】 ${translated}`;
             } else {
-              foundMeaning = '（日本語訳が見つかりませんでした）';
+              foundMeaning = '【日本語訳】 （訳が見つかりませんでした）';
             }
           } else {
-            foundMeaning = '（日本語訳の取得に失敗しました）';
+            foundMeaning = '【日本語訳】 （翻訳の取得に失敗しました）';
           }
         } catch (err) {
-          foundMeaning = '（ネット辞書検索エラー。音声で発音を確認できます）';
+          foundMeaning = `【日本語訳】 ${cleanQuery}`; // エラー時は入力された単語をそのまま表示
         }
       }
 

@@ -2367,17 +2367,17 @@
       if (chk) chk.checked = App.tts.pronounceCheckEnabled;
     }
 
-    // ✨ 改善：1単語だけでなく、空白を含む熟語（例: give away）も一体として検知するダブルクリック/選択処理
+    // ✨ 【修正版】ダブルクリック＆範囲選択の判定処理（誤抽出・余分なスペースを排除）
     document.addEventListener('dblclick', (e) => {
       let selectedText = '';
       
-      // 1. ユーザーがマウスで「give away」のように複数単語をドラッグ選択している場合を最優先で取得
+      // 1. ドラッグ等で明示的に範囲選択（熟語「give away」「to give away」など）されている場合はそれを最優先
       const selection = window.getSelection();
       if (selection && selection.toString().trim().length > 0) {
         selectedText = selection.toString().trim();
       } 
       
-      // 2. 選択されていない場合、クリック座標から単語または熟語の範囲をスマートに抽出
+      // 2. 選択されていない場合、ダブルクリックされた「1つの単語だけ」を正確に抽出（空白は含めない）
       if (!selectedText && document.caretRangeFromPoint) {
         const range = document.caretRangeFromPoint(e.clientX, e.clientY);
         if (range && range.startContainer) {
@@ -2397,15 +2397,13 @@
             let offset = range.startOffset;
             if (offset > text.length) offset = text.length;
             
-            // 💡 変更点：単語だけでなく、スペースやハイフンを含んだ熟語単位（例: give away）を切り出せるように拡張
-            // クリック位置を中心に、アルファベットと空白文字・ハイフンが連続する範囲を取得する
+            // 単語（英字・ハイフン・アポストロフィ）のみを境界として切り出す
             let start = offset;
-            while (start > 0 && /[a-zA-Z\-\s]/.test(text.charAt(start - 1))) {
-              // ただし、単語の間以外の余分なスペースを巻き込まないよう調整
+            while (start > 0 && /[a-zA-Z\-']/.test(text.charAt(start - 1))) {
               start--;
             }
             let end = offset;
-            while (end < text.length && /[a-zA-Z\-\s]/.test(text.charAt(end))) {
+            while (end < text.length && /[a-zA-Z\-']/.test(text.charAt(end))) {
               end++;
             }
             selectedText = text.substring(start, end).trim();
@@ -2413,26 +2411,23 @@
         }
       }
       
-      // 前後の不要な記号を除去（ただし単語間のスペースは保持する）
+      // 前後の記号や不要な文字を除去
       selectedText = selectedText.replace(/^[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+/,"")
                                    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+$/,"")
                                    .trim();
 
-      // 💡 変更点：熟語（例: give away = 2〜4単語程度）まで許容するように制限を緩和（最大4単語までOK）
       if (!selectedText) return;
-      const wordCount = selectedText.split(/\s+/).length;
-      if (wordCount > 4) return; // 5単語以上の長すぎる文は無視
 
       lookupWordInApp(selectedText);
     });
 
-    // 💡 改善：ネット辞書検索時に、英語の定義ではなく「日本語の意味（翻訳）」を取得して表示する
+    // ✨ 【修正版】誤検索（partial match）を完全排除し、単語・熟語の正確な意味を取得する処理
     async function lookupWordInApp(queryWord) {
       const cleanQuery = queryWord.toLowerCase().trim();
       let foundMeaning = '';
       let matchedWord = queryWord;
 
-      // 1. アプリ内登録単語データから完全一致を探す
+      // 1. アプリ内（スプレッドシート）の単語と「完全一致」するか確認
       for (const item of App.allWords) {
         if (item.word.toLowerCase() === cleanQuery) {
           matchedWord = item.word;
@@ -2443,66 +2438,53 @@
         }
       }
 
-      // 2. 見つからない場合、語尾の変化（s, ed, ing, es等）を落とした原形でもアプリ内を探す
+      // 2. 完全一致しない場合、一般的な語尾変化（s, ed, ing, es, d）を外した「原形」で完全一致するか確認
+      // ※ startsWith や includes は「out -> outdated」「spread -> widespread」等の誤検知を引き起こすため使用しない
       if (!foundMeaning) {
         let baseQuery = cleanQuery;
         if (baseQuery.endsWith('ies')) baseQuery = baseQuery.slice(0, -3) + 'y';
-        else if (baseQuery.endsWith('es') || baseQuery.endsWith('ed')) baseQuery = baseQuery.slice(0, -2);
-        else if (baseQuery.endsWith('s') || baseQuery.endsWith('ing') || baseQuery.endsWith('d')) {
-          baseQuery = baseQuery.endsWith('ing') ? baseQuery.slice(0, -3) : baseQuery.slice(0, -1);
-        }
+        else if (baseQuery.endsWith('es')) baseQuery = baseQuery.slice(0, -2);
+        else if (baseQuery.endsWith('ed')) baseQuery = baseQuery.slice(0, -2);
+        else if (baseQuery.endsWith('ing')) baseQuery = baseQuery.slice(0, -3);
+        else if (baseQuery.endsWith('s') || baseQuery.endsWith('d')) baseQuery = baseQuery.slice(0, -1);
 
-        for (const item of App.allWords) {
-          const itemW = item.word.toLowerCase();
-          if (itemW === baseQuery || itemW.startsWith(baseQuery)) {
-            matchedWord = item.word;
-            if (item.details && item.details.length > 0) {
-              foundMeaning = item.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
+        if (baseQuery !== cleanQuery) {
+          for (const item of App.allWords) {
+            if (item.word.toLowerCase() === baseQuery) {
+              matchedWord = item.word;
+              if (item.details && item.details.length > 0) {
+                foundMeaning = item.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
+              }
+              break;
             }
-            break;
           }
         }
       }
 
-      // 3. それでもアプリ内で見つからない場合、詳細や例文内を横断検索
-      if (!foundMeaning) {
-        for (const item of App.allWords) {
-          if (item.word.toLowerCase().includes(cleanQuery)) {
-            matchedWord = item.word;
-            if (item.details && item.details.length > 0) {
-              foundMeaning = item.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
-            }
-            break;
-          }
-        }
-      }
-
-      // 4. アプリ内に全くない場合、日本語訳を返す外部API（MyMemory翻訳API / Wiktionary等）を使って日本語の意味を取得
+      // 3. アプリ内に完全一致・原形一致がない場合、ネット翻訳API（MyMemory API）で正確な日本語訳を取得
       if (!foundMeaning) {
         document.getElementById('dict-word').textContent = matchedWord;
         document.getElementById('dict-meaning').textContent = '🌐 ネットから日本語の意味を検索中...';
         document.getElementById('dict-modal').classList.remove('hidden');
 
         try {
-          // MyMemory翻訳API（英語→日本語の正確な訳を取得）
           const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanQuery)}&langpair=en|ja`);
           if (!res.ok) throw new Error('Translation failed');
           
           const data = await res.json();
           if (data && data.responseData && data.responseData.translatedText) {
-            let translated = data.responseData.translatedText;
-            // APIがうまく翻訳できなかったり、英語のまま返ってきた場合のチェック
-            if (translated && translated.toLowerCase() !== cleanQuery) {
+            let translated = data.responseData.translatedText.trim();
+            
+            if (translated) {
               foundMeaning = `【日本語訳】 ${translated}`;
             } else {
-              foundMeaning = '（日本語訳が見つかりませんでした。音声で発音を確認できます）';
+              foundMeaning = '（日本語訳が見つかりませんでした）';
             }
           } else {
             foundMeaning = '（日本語訳の取得に失敗しました）';
           }
         } catch (err) {
-          // ネット接続エラー等のフォールバック
-          foundMeaning = '（アプリ内・ネット辞書ともに未登録の単語です。音声で発音を確認できます）';
+          foundMeaning = '（ネット辞書検索エラー。音声で発音を確認できます）';
         }
       }
 

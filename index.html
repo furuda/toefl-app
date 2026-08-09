@@ -2367,17 +2367,16 @@
       if (chk) chk.checked = App.tts.pronounceCheckEnabled;
     }
 
-    // ✨ 【修正版】ダブルクリック＆範囲選択の判定処理（誤抽出・余分なスペースを排除）
     document.addEventListener('dblclick', (e) => {
       let selectedText = '';
       
-      // 1. ドラッグ等で明示的に範囲選択されている場合はそれを最優先
+      // ユーザーが明示的にドラッグして選択している場合
       const selection = window.getSelection();
       if (selection && selection.toString().trim().length > 0) {
         selectedText = selection.toString().trim();
       } 
       
-      // 2. 選択されていない場合、ダブルクリックされた「1つの単語だけ」を正確に抽出（空白や前後の余分な文脈を含めない）
+      // ダブルクリックされた位置の単語を正確にピンポイントで抽出する
       if (!selectedText && document.caretRangeFromPoint) {
         const range = document.caretRangeFromPoint(e.clientX, e.clientY);
         if (range && range.startContainer) {
@@ -2397,7 +2396,7 @@
             let offset = range.startOffset;
             if (offset > text.length) offset = text.length;
             
-            // スペースや記号をまたがないよう、英字・ハイフン・アポストロフィのみを境界として切り出す
+            // スペースや記号を境界として、クリックされた「1単語」を完全に切り出す
             let start = offset;
             while (start > 0 && /[a-zA-Z\-']/.test(text.charAt(start - 1))) {
               start--;
@@ -2411,7 +2410,7 @@
         }
       }
       
-      // 前後の記号を除去
+      // 前後の記号を削除
       selectedText = selectedText.replace(/^[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+/,"")
                                    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+$/,"")
                                    .trim();
@@ -2421,13 +2420,12 @@
       lookupWordInApp(selectedText);
     });
 
-    // ✨ 【修正版】誤検索を完全排除し、単語の正確な意味を取得する処理
     async function lookupWordInApp(queryWord) {
       const cleanQuery = queryWord.toLowerCase().trim();
       let foundMeaning = '';
       let matchedWord = queryWord;
 
-      // 1. アプリ内の単語と「完全一致」するか確認
+      // 1. アプリ内の単語リストから完全一致を探す
       for (const item of App.allWords) {
         if (item.word.toLowerCase() === cleanQuery) {
           matchedWord = item.word;
@@ -2438,7 +2436,7 @@
         }
       }
 
-      // 2. 完全一致しない場合、語尾変化（s, ed, ing等）を外した「原形」で完全一致するか確認
+      // 2. 活用語尾（s, ed, ing等）を外した原形で探す
       if (!foundMeaning) {
         let baseQuery = cleanQuery;
         if (baseQuery.endsWith('ies')) baseQuery = baseQuery.slice(0, -3) + 'y';
@@ -2460,7 +2458,7 @@
         }
       }
 
-      // 3. アプリ内にない場合、翻訳APIで正確な日本語訳を取得
+      // 3. アプリ内にない場合は外部翻訳APIで取得
       if (!foundMeaning) {
         document.getElementById('dict-word').textContent = matchedWord;
         document.getElementById('dict-meaning').textContent = '🌐 ネットから日本語の意味を検索中...';
@@ -2473,17 +2471,20 @@
           const data = await res.json();
           if (data && data.responseData && data.responseData.translatedText) {
             let translated = data.responseData.translatedText.trim();
-            foundMeaning = translated ? `【日本語訳】 ${translated}` : '（日本語訳が見つかりませんでした）';
+            foundMeaning = translated ? translated : '日本語訳が見つかりませんでした';
           } else {
-            foundMeaning = '（日本語訳の取得に失敗しました）';
+            foundMeaning = '日本語訳の取得に失敗しました';
           }
         } catch (err) {
-          foundMeaning = '（ネット辞書検索エラー）';
+          foundMeaning = 'ネット辞書検索エラー';
         }
       }
 
+      // ★ 必ず「【日本語訳】」をプレフィックスとして付けてポップアップに反映する
+      const formattedMeaning = `【日本語訳】 ${foundMeaning}`;
+
       document.getElementById('dict-word').textContent = matchedWord;
-      document.getElementById('dict-meaning').textContent = foundMeaning;
+      document.getElementById('dict-meaning').textContent = formattedMeaning;
       document.getElementById('dict-modal').classList.remove('hidden');
 
       speakText(matchedWord);

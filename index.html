@@ -1824,68 +1824,549 @@
       showCurrentTestQuestion();
     }
 
-    // 1. highlightWordInExample 関数（英語の全変形パターンを網羅したジェネリック版・デグレード防止）
+    /**
+     * 小テスト例文の正解単語を太字表示
+     *
+     * 英語の主要な変形を考慮する。
+     *
+     * 例：
+     * propel
+     *   → propel
+     *   → propels
+     *   → propelled
+     *   → propelling
+     *
+     * study
+     *   → study
+     *   → studies
+     *   → studied
+     *   → studying
+     *
+     * make
+     *   → make
+     *   → makes
+     *   → made
+     *   → making
+     *
+     * undertake
+     *   → undertake
+     *   → undertakes
+     *   → undertook
+     *   → undertaken
+     *   → undertaking
+     */
     function highlightWordInExample(exampleText, wordToHighlight) {
-      if (!exampleText) return 'No example available.';
-      if (!wordToHighlight) return escapeHtml(exampleText);
     
-      // 一旦テキストを安全にHTMLエスケープ
-      const escapedEx = escapeHtml(exampleText);
-      let cleanWord = wordToHighlight.trim().toLowerCase();
-      let escapedBase = cleanWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (!exampleText) {
+        return 'No example available.';
+      }
     
-      let patterns = [escapedBase];
-      let stem = escapedBase;
-      const lastChar = cleanWord.slice(-1);
-      const secondLastChar = cleanWord.length >= 2 ? cleanWord.slice(-2, -1) : '';
-
-      // 1. 'e' で終わる単語 (例: undertake -> undertaken, compelの前に処理されるもの等 / 例外含む)
+      if (!wordToHighlight) {
+        return escapeHtml(exampleText);
+      }
+    
+      const originalWord = String(wordToHighlight).trim();
+      const cleanWord = originalWord.toLowerCase();
+    
+      if (!cleanWord) {
+        return escapeHtml(exampleText);
+      }
+    
+      // ------------------------------------------------------------
+      // 正規表現用エスケープ
+      // ------------------------------------------------------------
+      function escapeRegex(text) {
+        return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      }
+    
+      const base = escapeRegex(cleanWord);
+    
+      // 重複防止用
+      const patterns = new Set();
+    
+      // 元の単語は必ず対象
+      patterns.add(base);
+    
+      // ============================================================
+      // 1. 一般的な三単現
+      // ============================================================
+    
+      // propel → propels
+      patterns.add(`${base}s`);
+    
+      // ============================================================
+      // 2. 一般的な -ed / -ing
+      // ============================================================
+    
+      // work → worked / working
+      patterns.add(`${base}ed`);
+      patterns.add(`${base}ing`);
+    
+      // ============================================================
+      // 3. e で終わる単語
+      //
+      // make → made / making
+      // like → liked / liking
+      // use → used / using
+      //
+      // ※ 不規則過去形は後半のマッピングで処理
+      // ============================================================
       if (cleanWord.endsWith('e')) {
-        stem = escapedBase.slice(0, -1);
-        patterns.push(`${stem}e[ds]?`);        // 例: liked, likes
-        patterns.push(`${stem}ing`);           // 例: liking (eを取ってing)
-        patterns.push(`${stem}en`);            // 例: undertaken
-        patterns.push(`${stem}n`);             // 例: born 等
-      } 
-      // 2. 'y' で終わる単語 (例: amplify -> amplified, amplifies)
-      else if (cleanWord.endsWith('y')) {
-        stem = escapedBase.slice(0, -1);
-        patterns.push(`${stem}ies`);           // 例: amplifies
-        patterns.push(`${stem}ied`);           // 例: amplified
-        patterns.push(`${stem}ier`);           // 例: amplifierの比較級等
-        patterns.push(`${stem}iest`);
-        patterns.push(`${escapedBase}ing`);    // 例: studying
-        patterns.push(`${escapedBase}s`);      // 例: amplifies (yを残す場合もあるため)
-      } 
-      // 3. 短母音＋子音で終わる単語（子音字が重複してedやingになるパターン：例 compel -> compelled, compel -> compelling, stop -> stopped）
-      else if (!['a', 'e', 'i', 'o', 'u', 'w', 'x', 'y'].includes(lastChar) && 
-               ['a', 'e', 'i', 'o', 'u'].includes(secondLastChar)) {
-        patterns.push(`${escapedBase}${lastChar}[ds]?`); // 例: compelled, stopped, steps
-        patterns.push(`${escapedBase}${lastChar}ing`);  // 例: compelling, stopping
-        patterns.push(`${escapedBase}s?`);              // 通常のs
-        patterns.push(`${escapedBase}ed`);              // 通常のed
-        patterns.push(`${escapedBase}ing`);             // 通常のing
-      } 
-      // 4. その他の一般規則動詞・変化
-      else {
-        patterns.push(`${escapedBase}s?`);
-        patterns.push(`${escapedBase}ed`);
-        patterns.push(`${escapedBase}ing`);
-        patterns.push(`${escapedBase}en?`);
-      }
-
-      // 特殊な不規則変化の個別マッピング（必要に応じた安全策）
-      if (cleanWord === 'undertake') {
-        patterns.push('undertaken', 'undertook');
-      } else if (cleanWord === 'compel') {
-        patterns.push('compelled', 'compelling');
-      }
-
-      // 重複排除と長いパターンを優先して正規表現を構築（誤マッチを防ぐため長さを降順ソート）
-      const uniquePatterns = Array.from(new Set(patterns)).sort((a, b) => b.length - a.length);
-      const regex = new RegExp(`\\b(${uniquePatterns.join('|')})\\b`, 'gi');
     
-      return escapedEx.replace(regex, '<strong class="font-extrabold text-indigo-700 underline decoration-indigo-400 decoration-2 font-mono">$1</strong>');
+        const stem = escapeRegex(cleanWord.slice(0, -1));
+    
+        // likes / liked
+        patterns.add(`${stem}e?s`);
+        patterns.add(`${stem}ed`);
+    
+        // making / taking / using
+        patterns.add(`${stem}ing`);
+    
+        // make → maken のような誤変化は作らない
+      }
+    
+      // ============================================================
+      // 4. 子音 + y
+      //
+      // study → studies
+      // study → studied
+      // study → studying
+      //
+      // carry → carries / carried / carrying
+      // ============================================================
+      if (cleanWord.endsWith('y') && cleanWord.length > 1) {
+    
+        const stem = escapeRegex(cleanWord.slice(0, -1));
+    
+        // study → studies
+        patterns.add(`${stem}ies`);
+    
+        // study → studied
+        patterns.add(`${stem}ied`);
+    
+        // study → studying
+        patterns.add(`${base}ing`);
+    
+        // play → plays
+        patterns.add(`${base}s`);
+      }
+    
+      // ============================================================
+      // 5. 子音重複型
+      //
+      // propel → propelled
+      // propel → propelling
+      //
+      // stop → stopped
+      // stop → stopping
+      //
+      // plan → planned
+      // plan → planning
+      //
+      // ★ 今回の propel の問題はここで解決
+      // ============================================================
+      const lastChar = cleanWord.slice(-1);
+      const secondLastChar =
+        cleanWord.length >= 2
+          ? cleanWord.slice(-2, -1)
+          : '';
+    
+      const vowels = ['a', 'e', 'i', 'o', 'u'];
+    
+      // 最後が子音
+      // かつ直前が母音
+      if (
+        cleanWord.length >= 3 &&
+        !vowels.includes(lastChar) &&
+        !['w', 'x', 'y'].includes(lastChar) &&
+        vowels.includes(secondLastChar)
+      ) {
+    
+        const doubledBase =
+          escapeRegex(cleanWord) + escapeRegex(lastChar);
+    
+        // propel → propelled
+        patterns.add(`${doubledBase}ed`);
+    
+        // propel → propelling
+        patterns.add(`${doubledBase}ing`);
+    
+        // stop → stopped / stopping
+        patterns.add(`${doubledBase}ed`);
+        patterns.add(`${doubledBase}ing`);
+      }
+    
+      // ============================================================
+      // 6. -ie → -ying
+      //
+      // die → dying
+      // lie → lying
+      // tie → tying
+      // ============================================================
+      if (cleanWord.endsWith('ie')) {
+    
+        const stem = escapeRegex(cleanWord.slice(0, -2));
+    
+        patterns.add(`${stem}ying`);
+      }
+    
+      // ============================================================
+      // 7. -s / -es の変化
+      //
+      // watch → watches
+      // pass → passes
+      // fix → fixes
+      // go → goes
+      //
+      // ============================================================
+      if (
+        cleanWord.endsWith('s') ||
+        cleanWord.endsWith('x') ||
+        cleanWord.endsWith('z') ||
+        cleanWord.endsWith('ch') ||
+        cleanWord.endsWith('sh')
+      ) {
+        patterns.add(`${base}es`);
+      }
+    
+      // ============================================================
+      // 8. 不規則変化
+      //
+      // ここはよく使うものを登録。
+      // ============================================================
+      const irregularMap = {
+    
+        be: [
+          'am',
+          'is',
+          'are',
+          'was',
+          'were',
+          'been',
+          'being'
+        ],
+    
+        have: [
+          'has',
+          'had',
+          'having'
+        ],
+    
+        do: [
+          'does',
+          'did',
+          'done',
+          'doing'
+        ],
+    
+        go: [
+          'goes',
+          'went',
+          'gone',
+          'going'
+        ],
+    
+        come: [
+          'comes',
+          'came',
+          'coming'
+        ],
+    
+        make: [
+          'makes',
+          'made',
+          'making'
+        ],
+    
+        take: [
+          'takes',
+          'took',
+          'taken',
+          'taking'
+        ],
+    
+        give: [
+          'gives',
+          'gave',
+          'given',
+          'giving'
+        ],
+    
+        get: [
+          'gets',
+          'got',
+          'gotten',
+          'getting'
+        ],
+    
+        see: [
+          'sees',
+          'saw',
+          'seen',
+          'seeing'
+        ],
+    
+        know: [
+          'knows',
+          'knew',
+          'known',
+          'knowing'
+        ],
+    
+        think: [
+          'thinks',
+          'thought',
+          'thinking'
+        ],
+    
+        say: [
+          'says',
+          'said',
+          'saying'
+        ],
+    
+        tell: [
+          'tells',
+          'told',
+          'telling'
+        ],
+    
+        find: [
+          'finds',
+          'found',
+          'finding'
+        ],
+    
+        bring: [
+          'brings',
+          'brought',
+          'bringing'
+        ],
+    
+        buy: [
+          'buys',
+          'bought',
+          'buying'
+        ],
+    
+        understand: [
+          'understands',
+          'understood',
+          'understanding'
+        ],
+    
+        undertake: [
+          'undertakes',
+          'undertook',
+          'undertaken',
+          'undertaking'
+        ],
+    
+        begin: [
+          'begins',
+          'began',
+          'begun',
+          'beginning'
+        ],
+    
+        write: [
+          'writes',
+          'wrote',
+          'written',
+          'writing'
+        ],
+    
+        read: [
+          'reads',
+          'read',
+          'reading'
+        ],
+    
+        run: [
+          'runs',
+          'ran',
+          'running'
+        ],
+    
+        eat: [
+          'eats',
+          'ate',
+          'eaten',
+          'eating'
+        ],
+    
+        drink: [
+          'drinks',
+          'drank',
+          'drunk',
+          'drinking'
+        ],
+    
+        speak: [
+          'speaks',
+          'spoke',
+          'spoken',
+          'speaking'
+        ],
+    
+        choose: [
+          'chooses',
+          'chose',
+          'chosen',
+          'choosing'
+        ],
+    
+        become: [
+          'becomes',
+          'became',
+          'become',
+          'becoming'
+        ]
+      };
+    
+      if (irregularMap[cleanWord]) {
+        irregularMap[cleanWord].forEach(form => {
+          patterns.add(escapeRegex(form));
+        });
+      }
+    
+      // ============================================================
+      // 9. 逆方向の不規則変化
+      //
+      // 小テストの登録単語が
+      // "undertook" のような形だった場合でも
+      // undertake 系として扱えるようにする。
+      // ============================================================
+      const irregularReverseMap = {
+    
+        am: 'be',
+        is: 'be',
+        are: 'be',
+        was: 'be',
+        were: 'be',
+        been: 'be',
+        being: 'be',
+    
+        has: 'have',
+        had: 'have',
+        having: 'have',
+    
+        does: 'do',
+        did: 'do',
+        done: 'do',
+        doing: 'do',
+    
+        goes: 'go',
+        went: 'go',
+        gone: 'go',
+        going: 'go',
+    
+        comes: 'come',
+        came: 'come',
+        coming: 'come',
+    
+        makes: 'make',
+        made: 'make',
+        making: 'make',
+    
+        takes: 'take',
+        took: 'take',
+        taken: 'take',
+        taking: 'take',
+    
+        gives: 'give',
+        gave: 'give',
+        given: 'give',
+        giving: 'give',
+    
+        gets: 'get',
+        got: 'get',
+        gotten: 'get',
+        getting: 'get',
+    
+        sees: 'see',
+        saw: 'see',
+        seen: 'see',
+        seeing: 'see',
+    
+        knows: 'know',
+        knew: 'know',
+        known: 'know',
+        knowing: 'know',
+    
+        thinks: 'think',
+        thought: 'think',
+        thinking: 'think',
+    
+        says: 'say',
+        said: 'say',
+        saying: 'say',
+    
+        tells: 'tell',
+        told: 'tell',
+        telling: 'tell',
+    
+        finds: 'find',
+        found: 'find',
+        finding: 'find',
+    
+        brings: 'bring',
+        brought: 'bring',
+        bringing: 'bring',
+    
+        buys: 'buy',
+        bought: 'buy',
+        buying: 'buy',
+    
+        understands: 'understand',
+        understood: 'understand',
+        understanding: 'understand',
+    
+        undertakes: 'undertake',
+        undertook: 'undertake',
+        undertaken: 'undertake',
+        undertaking: 'undertake'
+      };
+    
+      if (irregularReverseMap[cleanWord]) {
+    
+        const root = irregularReverseMap[cleanWord];
+    
+        patterns.add(escapeRegex(root));
+        patterns.add(escapeRegex(root + 's'));
+        patterns.add(escapeRegex(root + 'ed'));
+        patterns.add(escapeRegex(root + 'ing'));
+      }
+    
+      // ============================================================
+      // 10. 重複削除
+      // ============================================================
+      const uniquePatterns =
+        Array.from(patterns)
+          .filter(Boolean)
+          .sort((a, b) => b.length - a.length);
+    
+      // ============================================================
+      // 11. 単語境界を厳密にして検索
+      //
+      // propel が
+      // "propeller"
+      // の一部まで太字になるのを防ぐ。
+      // ============================================================
+      const regex = new RegExp(
+        `\\b(${uniquePatterns.join('|')})\\b`,
+        'gi'
+      );
+    
+      // ============================================================
+      // 12. HTMLエスケープ後にハイライト
+      // ============================================================
+      const escapedExample = escapeHtml(exampleText);
+    
+      return escapedExample.replace(
+        regex,
+        '<strong class="font-extrabold text-indigo-700 underline decoration-indigo-400 decoration-2 font-mono">$1</strong>'
+      );
     }
 
     // 2. showCurrentTestQuestion 関数（onclick属性での文字バッティング防止）

@@ -2367,233 +2367,281 @@
       if (chk) chk.checked = App.tts.pronounceCheckEnabled;
     }
 
-    // 根本的な解決策：ダブルクリックされた要素から正確な単語のテキストを取得する
+    // ============================================
+    // ダブルクリックイベントリスナー（修正版）
+    // ============================================
     document.addEventListener('dblclick', (e) => {
       let selectedText = '';
       
-      // 1. ユーザーがドラッグして選択している場合はそれを最優先
+      // 1. ユーザー選択テキストを優先
       const selection = window.getSelection();
       if (selection && selection.toString().trim().length > 0) {
         selectedText = selection.toString().trim();
       }
       
-      // 2. ダブルクリックされた位置の単語を、クリックされた正確なターゲット要素（テキストノード）から取得
+      // 2. 選択がなければcaretRangeFromPointで位置の単語を取得
       if (!selectedText) {
-        let target = e.target;
-        
-        // もしクリックされたのがボタンや親要素であれば、その中のテキスト全体、またはクリック位置の単語を安全に取得
-        if (target && target.nodeType === Node.ELEMENT_NODE) {
-          // ダブルクリックされた位置の単語をcaretRangeFromPointで安全にヒットさせる
-          if (document.caretRangeFromPoint) {
-            const range = document.caretRangeFromPoint(e.clientX, e.clientY);
-            if (range && range.startContainer) {
-              let textNode = range.startContainer;
-              if (textNode.nodeType === Node.TEXT_NODE) {
-                const text = textNode.nodeValue;
-                let offset = range.startOffset;
-                if (offset > text.length) offset = text.length;
-                
-                // スペースや記号の境界までを正確に切り出す
-                let start = offset;
-                while (start > 0 && /[a-zA-Z\-']/.test(text.charAt(start - 1))) {
-                  start--;
-                }
-                let end = offset;
-                while (end < text.length && /[a-zA-Z\-']/.test(text.charAt(end))) {
-                  end++;
-                }
-                selectedText = text.substring(start, end).trim();
-              }
-            }
-          }
-          
-          // 万が一caretRangeFromPointで取れない場合のフォールバック（要素のテキストから推測せず空にする）
-          if (!selectedText && target.textContent && target.textContent.length < 50) {
-            selectedText = target.textContent.trim();
+        if (document.caretRangeFromPoint) {
+          const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+          if (range && range.startContainer && range.startContainer.nodeType === Node.TEXT_NODE) {
+            const text = range.startContainer.nodeValue;
+            let offset = range.startOffset;
+            if (offset > text.length) offset = text.length;
+            
+            let start = offset;
+            while (start > 0 && /[a-zA-Z\-']/.test(text.charAt(start - 1))) start--;
+            let end = offset;
+            while (end < text.length && /[a-zA-Z\-']/.test(text.charAt(end))) end++;
+            selectedText = text.substring(start, end).trim();
           }
         }
       }
       
-      // 前後の記号や不要な文字を完全に削ぎ落とす
-      selectedText = selectedText.replace(/^[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+/,"")
-                                   .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+$/,"")
-                                   .trim();
-
+      // 3. 不要な記号を除去
+      selectedText = selectedText
+        .replace(/^[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+/, '')
+        .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'ü]+$/, '')
+        .trim();
+    
       if (!selectedText) return;
-
-      lookupWordInApp(selectedText);
+      
+      // ★ 第2引数に e.target を渡してDOM文脈解析を可能にする
+      lookupWordInApp(selectedText, e.target);
     });
 
-    // ============================================
-    // 修正①：文脈フレーズ抽出関数（新規追加）
-    // ============================================
     /**
-     * テキスト中の対象単語の前後2〜3語を含む短いフレーズを抽出する。
-     * 長い例文・定義文全体を送ると翻訳精度が低下するため、単語周辺の
-     * コロケーション（固まり）のみを切り出す。
+     * 文脈フレーズ抽出（APIフォールバック用）
+     * ダブルクリック位置の前後2〜3語を含む短いフレーズを取得
      */
-    function extractContextPhrase(word, text) {
-      if (!text || !word) return word;
+    function extractContextPhrase(word, targetEl) {
+      let text = '';
       
-      // 大文字小文字を無視して位置を特定
+      // まず同じブロック内の英文を取得
+      if (targetEl) {
+        const container = targetEl.closest('div[class*="bg-white"]') || 
+                          targetEl.closest('div[class*="bg-indigo-50"]') ||
+                          targetEl.closest('div[class*="bg-amber-50"]');
+        if (container) {
+          // ブロック内の英語テキストを結合
+          const enEls = container.querySelectorAll('.italic, .text-indigo-900, .font-medium');
+          text = Array.from(enEls).map(el => el.textContent).join(' ');
+        }
+      }
+      
+      // ブロックから取れなければ、クリックされた要素自身のテキスト
+      if (!text && targetEl) {
+        text = targetEl.textContent || '';
+      }
+      
+      if (!text) return word;
+    
+      // 対象単語を含む前後3語のフレーズを抽出
       const escapedWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const regex = new RegExp(`(^|[^a-zA-Z'-])${escapedWord}([^a-zA-Z'-]|$)`, 'i');
       const match = text.match(regex);
       
       if (!match) return word;
       
-      // 単語の開始・終了位置を正確に計算
       const prefixLen = match[1] ? match[1].length : 0;
       const wordStart = match.index + prefixLen;
       const wordEnd = wordStart + word.length;
       
-      // 前後のテキストを単語単位で分割し、前後3語ずつ取得
       const beforePart = text.substring(0, wordStart).trim();
       const afterPart = text.substring(wordEnd).trim();
       
       const beforeWords = beforePart.split(/\s+/).filter(w => w.length > 0).slice(-3);
       const afterWords = afterPart.split(/\s+/).filter(w => w.length > 0).slice(0, 3);
       
-      // フレーズを再構成（例: "make oneself familiar with a"）
-      const phrase = [...beforeWords, word, ...afterWords].join(' ').trim();
-      return phrase || word;
+      return [...beforeWords, word, ...afterWords].join(' ').trim() || word;
     }
     
-    // ============================================
-    // 修正②：翻訳品質チェック関数（新規追加）
-    // ============================================
     /**
-     * 翻訳APIの結果が明らかに不適切かどうかを判定する。
-     * ・入力と同じ（未翻訳）
-     * ・英語単語がそのまま残っている
-     * ・既知の誤訳パターン（"full trust" 等）
+     * 翻訳結果の品質チェック
      */
     function isTranslationInvalid(original, translated) {
-      if (!translated || translated === original) return true;
-      
+      if (!translated) return true;
       const t = translated.toLowerCase().trim();
       const o = original.toLowerCase().trim();
       
-      // 1. 入力とほぼ同じ（未翻訳）
-      if (t === o || t.replace(/[.]/g, '') === o.replace(/[.]/g, '')) return true;
+      // 未翻訳（入力と同じ）
+      if (t === o) return true;
       
-      // 2. 明らかな誤訳パターン（ブラックリスト）
-      const knownBadTranslations = ['full trust', 'ある程度信頼', 'to', 'of', 'the'];
-      if (knownBadTranslations.some(bad => t.includes(bad.toLowerCase()))) return true;
+      // 明らかな誤訳パターン
+      const badPatterns = ['full trust', 'ある程度信頼', 'to', 'of', 'the'];
+      if (badPatterns.some(bad => t.includes(bad))) return true;
       
-      // 3. 翻訳結果が英語のみ（日本語訳が含まれていない）
-      // 日本語の常用漢字・ひらがな・カタカナが含まれているか簡易チェック
-      const hasJapanese = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(translated);
-      if (!hasJapanese && translated.length > 2) return true;
+      // 日本語が含まれていない（未翻訳の可能性）
+      if (!/[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(translated)) return true;
       
       return false;
     }
+
+    /**
+     * 辞書モーダル表示（統一）
+     */
+    function showDictModal(word, meaning) {
+      document.getElementById('dict-word').textContent = word;
+      document.getElementById('dict-meaning').textContent = meaning;
+      document.getElementById('dict-modal').classList.remove('hidden');
+    }
     
     // ============================================
-    // 修正③：lookupWordInApp 関数（全面書き換え）
+    // ダブルクリック辞書機能（完全書き換え版）
     // ============================================
+    
     /**
-     * ダブルクリックされた単語の辞書引き。
-     * ・文脈フレーズを優先して翻訳（例: give away → 手放す）
-     * ・単語の基本義はアプリ内データまたは単体翻訳で補完
-     * ・誤訳時は自動フォールバック
+     * メイン辞書引き関数
+     * @param {string} queryWord - ダブルクリックされた単語
+     * @param {Element} targetEl - ダブルクリックされたDOM要素（文脈特定用）
      */
-    async function lookupWordInApp(queryWord) {
+    async function lookupWordInApp(queryWord, targetEl) {
       const cleanQuery = queryWord.toLowerCase().trim();
       let matchedWord = queryWord;
-      let appMeaning = '';      // アプリ内の基本義
-      let contextPhrase = '';   // 文脈フレーズ
-      let phraseMeaning = '';   // 文脈フレーズの翻訳結果
-      let wordMeaning = '';     // 単語単体の翻訳結果
+      let results = []; // 表示候補を優先順位で溜める
     
-      // --- Step 1: アプリ内辞書検索（基本義の取得） ---
-      for (const item of App.allWords) {
-        if (item.word.toLowerCase() === cleanQuery) {
-          matchedWord = item.word;
-          if (item.details && item.details.length > 0) {
-            appMeaning = item.details.map(d => d.meaningJa).filter(Boolean).join(' / ');
-          }
-          break;
+      // ========================================
+      // Step 1: アプリ内辞書検索（最優先・最確実）
+      // ========================================
+      const foundInApp = App.allWords.find(item => 
+        item.word.toLowerCase() === cleanQuery
+      );
+      
+      if (foundInApp && foundInApp.details && foundInApp.details.length > 0) {
+        matchedWord = foundInApp.word;
+        const appMeanings = foundInApp.details
+          .map(d => d.meaningJa)
+          .filter(Boolean)
+          .join(' / ');
+        
+        if (appMeanings) {
+          results.push({ type: '単語登録訳', text: appMeanings });
         }
       }
     
-      // --- Step 2: 文脈（フレーズ）の取得 ---
-      const selection = window.getSelection();
-      if (selection && selection.anchorNode) {
-        let parentEl = selection.anchorNode.parentElement;
-        if (parentEl) {
-          const fullText = parentEl.textContent || '';
-          // 長いテキストの場合のみフレーズ抽出を実行
-          contextPhrase = extractContextPhrase(cleanQuery, fullText);
-        }
+      // ========================================
+      // Step 2: DOM文脈検索（クリックされたブロックの日本語訳）
+      // ========================================
+      // ダブルクリックされた要素が属する「意味・例文ブロック」を特定し、
+      // 同じブロック内の日本語訳を直接取得する
+      const contextualJa = findContextualJa(targetEl, cleanQuery);
+      if (contextualJa) {
+        results.push({ type: '文脈訳', text: contextualJa });
       }
-      // 文脈が取得できなければ単語単体を使う
-      if (!contextPhrase) contextPhrase = cleanQuery;
     
-      // --- Step 3: UI表示（検索中） ---
-      document.getElementById('dict-word').textContent = matchedWord;
-      document.getElementById('dict-meaning').textContent = '🌐 文脈に応じた日本語訳を検索中...';
-      document.getElementById('dict-modal').classList.remove('hidden');
-    
-      try {
-        // --- Step 4: 文脈フレーズを翻訳 ---
-        const phraseRes = await fetch(
-          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(contextPhrase)}&langpair=en|ja`
-        );
-        const phraseData = await phraseRes.json();
-        if (phraseData && phraseData.responseData && phraseData.responseData.translatedText) {
-          phraseMeaning = phraseData.responseData.translatedText.trim();
-        }
-    
-        // --- Step 5: 単語単体の翻訳（フォールバック用） ---
-        // アプリ内に基本義があればそれを優先、なければAPIで翻訳
-        if (appMeaning) {
-          wordMeaning = appMeaning;
+      // ========================================
+      // Step 3: 翻訳APIフォールバック（上記で解決しなかった場合のみ）
+      // ========================================
+      if (results.length === 0) {
+        const phrase = extractContextPhrase(cleanQuery, targetEl);
+        const translated = await translatePhrase(phrase);
+        
+        if (translated && !isTranslationInvalid(cleanQuery, translated)) {
+          results.push({ type: '翻訳', text: translated });
+        } else if (foundInApp) {
+          // API失敗時は単語登録訳にフォールバック（Step 1で拾えていても念のため）
+          results.push({ type: '単語登録訳', text: foundInApp.details[0]?.meaningJa || '訳データなし' });
         } else {
-          const wordRes = await fetch(
-            `https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanQuery)}&langpair=en|ja`
-          );
-          const wordData = await wordRes.json();
-          if (wordData && wordData.responseData && wordData.responseData.translatedText) {
-            wordMeaning = wordData.responseData.translatedText.trim();
-          }
+          results.push({ type: '翻訳', text: '辞書に未登録の単語です' });
         }
-    
-        // --- Step 6: 品質チェックと統合 ---
-        const isPhraseBad = isTranslationInvalid(contextPhrase, phraseMeaning);
-        const isWordBad = isTranslationInvalid(cleanQuery, wordMeaning);
-    
-        let finalMeaning = '';
-    
-        if (!isPhraseBad && phraseMeaning !== wordMeaning) {
-          // 文脈訳が有効で、かつ単語訳と異なる場合は両方表示
-          finalMeaning = `【文脈訳】${phraseMeaning}\n【単語訳】${wordMeaning || 'ー'}`;
-        } else if (!isWordBad) {
-          // 文脈訳が不適切なら単語訳のみ
-          finalMeaning = wordMeaning;
-        } else if (!isPhraseBad) {
-          // 単語訳も不適切だが文脈訳があるなら文脈訳のみ
-          finalMeaning = phraseMeaning;
-        } else {
-          // 両方不適切な場合はアプリ内データ or 原文表示
-          finalMeaning = appMeaning || `【日本語訳】${phraseMeaning || wordMeaning || '取得できませんでした'}`;
-        }
-    
-        // --- Step 7: 結果表示 ---
-        document.getElementById('dict-word').textContent = matchedWord;
-        document.getElementById('dict-meaning').textContent = finalMeaning;
-        document.getElementById('dict-modal').classList.remove('hidden');
-    
-      } catch (err) {
-        // --- エラーフォールバック ---
-        console.error('Dictionary lookup error:', err);
-        const fallback = appMeaning || 'ネット辞書検索エラー（アプリ内データのみ表示）';
-        document.getElementById('dict-word').textContent = matchedWord;
-        document.getElementById('dict-meaning').textContent = fallback;
-        document.getElementById('dict-modal').classList.remove('hidden');
       }
     
+      // ========================================
+      // 表示フォーマットの構築
+      // ========================================
+      let displayText = '';
+      
+      if (results.length === 1) {
+        displayText = results[0].text;
+      } else {
+        // 複数情報源がある場合は両方表示（重複除外）
+        const uniqueTexts = [];
+        const seen = new Set();
+        results.forEach(r => {
+          if (!seen.has(r.text)) {
+            seen.add(r.text);
+            uniqueTexts.push(`【${r.type}】${r.text}`);
+          }
+        });
+        displayText = uniqueTexts.join('\n');
+      }
+    
+      showDictModal(matchedWord, displayText);
       speakText(matchedWord);
+    }
+
+    /**
+     * 翻訳API呼び出し（フォールバック専用）
+     */
+    async function translatePhrase(phrase) {
+      try {
+        const res = await fetch(
+          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(phrase)}&langpair=en|ja`
+        );
+        const data = await res.json();
+        if (data && data.responseData && data.responseData.translatedText) {
+          return data.responseData.translatedText.trim();
+        }
+      } catch (err) {
+        console.error('Translation API error:', err);
+      }
+      return null;
+    }
+
+    /**
+     * DOM要素から親の「意味・例文ブロック」を遡り、対応する日本語訳を取得
+     * これにより「orientのfamiliar」→「〜に慣れる」が正しく引ける
+     */
+    function findContextualJa(targetEl, word) {
+      if (!targetEl) return null;
+      
+      // ダブルクリックされた要素から、親の detail ブロックを探す
+      // Tailwindの bg-white/80 や bg-indigo-50/70 などのブロックが単語情報のコンテナ
+      let container = null;
+      
+      // クラス名にスラッシュが含まれる場合のため、closestを複数パターンで試行
+      const trySelectors = [
+        'div[class*="bg-white"]',
+        'div[class*="bg-indigo-50"]', 
+        'div[class*="bg-amber-50"]',
+        '.rounded-xl', // ブロック要素の共通クラス
+        'div[class*="border-indigo-100"]',
+        'div[class*="border-amber-200"]'
+      ];
+      
+      for (const sel of trySelectors) {
+        try {
+          container = targetEl.closest(sel);
+          if (container) break;
+        } catch(e) { /* ignore invalid selector */ }
+      }
+    
+      if (!container) return null;
+    
+      // ブロック内の日本語訳要素を探す
+      // meaningJa: .font-bold.text-slate-800
+      // exampleJa: .text-\[10px\].text-slate-500 （例文の訳）
+      let jaText = '';
+    
+      // 1. まず「単語の意味（日本語）」を探す
+      const meaningEl = container.querySelector('.font-bold.text-slate-800');
+      if (meaningEl) {
+        jaText = meaningEl.textContent.trim();
+      }
+      
+      // 2. なければ「例文の訳」を探す
+      if (!jaText) {
+        const exampleEls = container.querySelectorAll('.text-slate-500, .text-indigo-700');
+        for (const el of exampleEls) {
+          const text = el.textContent.trim();
+          // 日本語らしい文字（ひらがな・カタカナ・漢字）が含まれているか
+          if (/[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(text)) {
+            jaText = text;
+            break;
+          }
+        }
+      }
+    
+      return jaText || null;
     }
 
     function closeDictModal() {

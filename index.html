@@ -3045,9 +3045,9 @@
         showDictModal(
           originalWord,
           result.meaning,
-          result.source || 'アプリ内データ'
+          result
         );
-    
+
         speakText(originalWord);
         return;
       }
@@ -3069,7 +3069,7 @@
           showDictModal(
             originalWord,
             result.meaning,
-            `${candidate} の意味`
+            result
           );
     
           speakText(originalWord);
@@ -3145,21 +3145,21 @@
         .trim();
     }
     
-    
     /**
-     * App.allWords の中から「その単語自身」の意味を探す。
+     * アプリ内の単語簿から単語の意味を検索する。
      *
-     * 優先順位：
-     *
-     * ① 通常の単語データ
-     * ② 派生語データ
-     * ③ meaningEn 内にその単語が含まれているデータ
-     *
-     * ※ 一番重要なのは①。
-     *    親単語の意味を返すのではなく、
-     *    検索対象の単語自身の details を返す。
+     * 戻り値：
+     * {
+     *   meaning: '日本語の意味',
+     *   source: '単語簿',
+     *   sourceType: 'word' / 'derived',
+     *   id: '1234',
+     *   word: 'propel',
+     *   parentWord: 'propel'   // 派生語の場合のみ
+     * }
      */
     function findWordMeaningInApp(queryWord) {
+    
       const target = normalizeLookupWord(queryWord);
     
       if (!target || !Array.isArray(App.allWords)) {
@@ -3174,14 +3174,21 @@
       });
     
       if (exactItem) {
+    
         const meanings = [];
     
         if (Array.isArray(exactItem.details)) {
+    
           exactItem.details.forEach(detail => {
+    
             if (detail && detail.meaningJa) {
+    
               const meaning = String(detail.meaningJa).trim();
     
-              if (meaning && !meanings.includes(meaning)) {
+              if (
+                meaning &&
+                !meanings.includes(meaning)
+              ) {
                 meanings.push(meaning);
               }
             }
@@ -3189,55 +3196,84 @@
         }
     
         if (meanings.length > 0) {
+    
           return {
             meaning: meanings.join(' / '),
-            source: '単語データ'
+    
+            // ★ 単語簿に存在することを明示
+            source: '単語簿',
+    
+            // ★ 通常単語
+            sourceType: 'word',
+    
+            // ★ 単語簿のID
+            id: exactItem.id || '',
+    
+            // ★ 単語簿の単語
+            word: exactItem.word || ''
           };
         }
       }
+    
     
       // ============================================================
       // ② 派生語として完全一致
       // ============================================================
       for (const item of App.allWords) {
-        if (!Array.isArray(item.derived)) continue;
+    
+        if (!Array.isArray(item.derived)) {
+          continue;
+        }
     
         for (const derived of item.derived) {
-          if (!derived || !derived.derivedWord) continue;
     
-          const derivedWord = normalizeLookupWord(derived.derivedWord);
+          if (
+            !derived ||
+            !derived.derivedWord
+          ) {
+            continue;
+          }
     
-          if (derivedWord === target) {
-            if (derived.meaning) {
-              return {
-                meaning: String(derived.meaning).trim(),
-                source: '派生語データ'
-              };
-            }
+          const derivedWord =
+            normalizeLookupWord(derived.derivedWord);
+    
+          if (derivedWord !== target) {
+            continue;
+          }
+    
+          // 派生語に意味が登録されている場合
+          if (derived.meaning) {
+    
+            return {
+    
+              meaning:
+                String(derived.meaning).trim(),
+    
+              // ★ 派生語であることを明示
+              source: '派生語',
+    
+              // ★ 派生語
+              sourceType: 'derived',
+    
+              // ★ 派生元単語のID
+              id: item.id || '',
+    
+              // ★ 実際に検索した派生語
+              word: derived.derivedWord || '',
+    
+              // ★ 親単語
+              parentWord: item.word || ''
+            };
           }
         }
       }
     
-      // ============================================================
-      // ③ meaningEn に単語が含まれている場合
-      //
-      // これは最後のアプリ内検索。
-      //
-      // 例えばデータ上、
-      //   "to make oneself familiar with a situation"
-      //
-      // のように登録されていても、
-      // familiar 自体が単語リストにない場合がある。
-      //
-      // この場合は「親単語の意味」を返さず、
-      // 後のAPI検索に進ませる。
-      //
-      // → ここでは誤った親単語の意味を表示しないことを優先する。
-      // ============================================================
     
+      // ============================================================
+      // ③ 見つからなかった
+      // ============================================================
       return null;
-    }
-    
+    } 
     
     /**
      * 活用形から元の単語候補を作る。
@@ -3441,53 +3477,130 @@
     /**
      * 辞書モーダル表示
      *
-     * 意味の部分をマウスで選択・コピーできるようにする。
+     * sourceInfo に、
+     * ・単語簿 / 派生語
+     * ・ID
+     * ・単語
+     * ・派生元単語
+     * をまとめて表示する。
      */
-    function showDictModal(word, meaning, source = '') {
-      const wordEl = document.getElementById('dict-word');
-      const meaningEl = document.getElementById('dict-meaning');
+    function showDictModal(word, meaning, sourceInfo = null) {
     
+      const wordEl =
+        document.getElementById('dict-word');
+    
+      const meaningEl =
+        document.getElementById('dict-meaning');
+    
+    
+      // ============================================================
+      // 単語
+      // ============================================================
       if (wordEl) {
+    
         wordEl.textContent = word || '';
     
-        // 単語も選択可能
         wordEl.style.userSelect = 'text';
         wordEl.style.webkitUserSelect = 'text';
         wordEl.style.cursor = 'text';
       }
     
-      if (meaningEl) {
-        meaningEl.textContent = meaning || '意味が見つかりませんでした。';
     
-        // ★ 意味をマウスで選択・コピー可能にする
+      // ============================================================
+      // 意味
+      // ============================================================
+      if (meaningEl) {
+    
+        meaningEl.textContent =
+          meaning || '意味が見つかりませんでした。';
+    
         meaningEl.style.userSelect = 'text';
         meaningEl.style.webkitUserSelect = 'text';
         meaningEl.style.cursor = 'text';
-    
-        // 長い意味でも選択しやすいようにする
         meaningEl.style.pointerEvents = 'auto';
       }
     
-      // 出典表示用の要素
-      let sourceEl = document.getElementById('dict-source');
+    
+      // ============================================================
+      // 情報表示
+      // ============================================================
+      let sourceEl =
+        document.getElementById('dict-source');
+    
     
       if (!sourceEl && meaningEl) {
-        sourceEl = document.createElement('div');
-        sourceEl.id = 'dict-source';
-        sourceEl.className = 'text-[10px] text-slate-400 mt-1';
     
-        // 出典も選択可能
+        sourceEl =
+          document.createElement('div');
+    
+        sourceEl.id = 'dict-source';
+    
+        sourceEl.className =
+          'text-[10px] text-slate-400 mt-2 leading-relaxed';
+    
         sourceEl.style.userSelect = 'text';
         sourceEl.style.webkitUserSelect = 'text';
     
         meaningEl.parentNode.appendChild(sourceEl);
       }
     
+    
+      // ============================================================
+      // ★ 単語簿データの場合
+      // ============================================================
       if (sourceEl) {
-        sourceEl.textContent = source ? `📌 ${source}` : '';
+    
+        if (
+          sourceInfo &&
+          sourceInfo.sourceType === 'word'
+        ) {
+    
+          sourceEl.textContent =
+            `📌 単語簿 ｜ ID: ${sourceInfo.id || '—'} ｜ 単語: ${sourceInfo.word || word}`;
+    
+        }
+    
+        // ==========================================================
+        // ★ 派生語データの場合
+        // ==========================================================
+        else if (
+          sourceInfo &&
+          sourceInfo.sourceType === 'derived'
+        ) {
+    
+          sourceEl.textContent =
+            `📌 派生語 ｜ ID: ${sourceInfo.id || '—'} ｜ 単語: ${sourceInfo.word || word} ｜ 元単語: ${sourceInfo.parentWord || '—'}`;
+    
+        }
+    
+        // ==========================================================
+        // ★ 自動翻訳などの場合
+        // ==========================================================
+        else if (
+          typeof sourceInfo === 'string'
+        ) {
+    
+          sourceEl.textContent =
+            `📌 ${sourceInfo}`;
+    
+        }
+    
+        else {
+    
+          sourceEl.textContent = '';
+        }
       }
     
-      document.getElementById('dict-modal').classList.remove('hidden');
+    
+      // ============================================================
+      // モーダル表示
+      // ============================================================
+      const modal =
+        document.getElementById('dict-modal');
+    
+      if (modal) {
+        modal.classList.remove('hidden');
+      }
     }
 
     /**

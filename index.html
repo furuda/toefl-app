@@ -2695,32 +2695,221 @@
       });
     }
 
+    /**
+     * 保存してTOPへ戻る
+     *
+     * GAS側が一時的に404 / HTMLを返した場合に備えて
+     * 自動的にリトライする。
+     */
     async function saveAndReset() {
+    
       const btn = document.getElementById('save-btn');
+    
+      if (!btn) return;
+    
       btn.disabled = true;
       btn.textContent = '💾 データを保存中...';
-
+    
+    
+      // ============================================================
+      // 保存するデータ
+      // ============================================================
       const payload = {
         sessionId: App.sessionId,
         results: App.results,
         testResults: App.testResults
       };
-
-      try {
-        const res = await fetch(GAS_API_URL, {
-          method: 'POST',
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-        
-        showToast('✅ スプレッドシートに正常保存されました！', 'success');
-        resetToSetup();
-      } catch (err) {
-        alert('保存に失敗しました: ' + err.message);
-        btn.disabled = false;
-        btn.textContent = '💾 再度保存を試みる';
+    
+    
+      // ============================================================
+      // リトライ設定
+      // ============================================================
+      const MAX_RETRIES = 4;
+    
+      // 1回目 → すぐ
+      // 2回目 → 1.5秒後
+      // 3回目 → 3秒後
+      // 4回目 → 5秒後
+      const RETRY_DELAYS = [
+        0,
+        1500,
+        3000,
+        5000
+      ];
+    
+    
+      let lastError = null;
+    
+    
+      // ============================================================
+      // 保存処理
+      // ============================================================
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    
+        try {
+    
+          // --------------------------------------------------------
+          // 2回目以降は少し待つ
+          // --------------------------------------------------------
+          if (attempt > 0) {
+    
+            const waitTime =
+              RETRY_DELAYS[attempt] || 3000;
+    
+            btn.textContent =
+              `💾 保存を再試行中... (${attempt + 1}/${MAX_RETRIES})`;
+    
+            await new Promise(resolve =>
+              setTimeout(resolve, waitTime)
+            );
+          }
+    
+    
+          // --------------------------------------------------------
+          // POST
+          // --------------------------------------------------------
+          const res = await fetch(
+            GAS_API_URL,
+            {
+              method: 'POST',
+    
+              // GAS Web AppではJSON本文を送る
+              body: JSON.stringify(payload),
+    
+              // キャッシュを避ける
+              cache: 'no-store'
+            }
+          );
+    
+    
+          // --------------------------------------------------------
+          // HTTPエラー確認
+          // --------------------------------------------------------
+          if (!res.ok) {
+    
+            throw new Error(
+              `サーバーエラー (HTTP ${res.status})`
+            );
+          }
+    
+    
+          // --------------------------------------------------------
+          // レスポンスを一度 text で取得
+          //
+          // いきなり res.json() しないのが重要。
+          // HTMLが返ってきても原因を判定できる。
+          // --------------------------------------------------------
+          const responseText =
+            await res.text();
+    
+          const trimmedText =
+            responseText.trim();
+    
+    
+          // --------------------------------------------------------
+          // JSONか確認
+          // --------------------------------------------------------
+          let data;
+    
+          try {
+    
+            data =
+              JSON.parse(trimmedText);
+    
+          } catch (jsonError) {
+    
+            // HTMLが返ってきた場合
+            if (
+              trimmedText.startsWith('<!DOCTYPE') ||
+              trimmedText.startsWith('<html') ||
+              trimmedText.startsWith('<HTML')
+            ) {
+    
+              throw new Error(
+                'GASから一時的にHTMLページが返されました。再試行します。'
+              );
+    
+            }
+    
+            throw new Error(
+              'GASから正しいJSONレスポンスが返されませんでした。'
+            );
+          }
+    
+    
+          // --------------------------------------------------------
+          // GAS側のエラー
+          // --------------------------------------------------------
+          if (data && data.error) {
+    
+            throw new Error(
+              data.error
+            );
+          }
+    
+    
+          // --------------------------------------------------------
+          // 保存成功
+          // --------------------------------------------------------
+          if (
+            data &&
+            (
+              data.success === true ||
+              data.status === 'success' ||
+              !data.error
+            )
+          ) {
+    
+            showToast(
+              '✅ スプレッドシートに正常保存されました！',
+              'success'
+            );
+    
+            resetToSetup();
+    
+            return;
+          }
+    
+    
+          // --------------------------------------------------------
+          // 想定外レスポンス
+          // --------------------------------------------------------
+          throw new Error(
+            'GASから想定外のレスポンスが返されました。'
+          );
+    
+    
+        } catch (err) {
+    
+          console.warn(
+            `保存試行 ${attempt + 1}/${MAX_RETRIES} 失敗:`,
+            err
+          );
+    
+          lastError = err;
+        }
       }
+    
+    
+      // ============================================================
+      // 全リトライ失敗
+      // ============================================================
+      alert(
+        '保存に失敗しました。\n\n' +
+        '自動で再試行しましたが、GASサーバーから正常な応答を取得できませんでした。\n\n' +
+        '時間を少し置いて、もう一度「再度保存を試みる」を押してください。\n\n' +
+        '原因: ' +
+        (lastError ? lastError.message : '不明')
+      );
+    
+    
+      // ============================================================
+      // ボタンを復旧
+      // ============================================================
+      btn.disabled = false;
+    
+      btn.textContent =
+        '💾 再度保存を試みる';
     }
 
     function resetToSetup() {

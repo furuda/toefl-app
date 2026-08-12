@@ -1073,37 +1073,369 @@
       if (item?.word) speakText(item.word);
     }
 
-    // ============================================
-    // API 通信関数（GASとの連動）
-    // ============================================
+    /**
+     * GASから単語データを読み込む
+     *
+     * 一時的な404 / HTMLレスポンス / 通信エラーに対応するため、
+     * 自動的に複数回リトライする。
+     */
     async function loadDataFromGAS() {
-      try {
-        const res = await fetch(`${GAS_API_URL}?action=getInitialData`);
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-        onDataLoaded(data);
-      } catch (err) {
-        alert('データ読み込み失敗: ' + err.message);
+    
+      const MAX_RETRIES = 5;
+    
+      // 再試行間隔
+      const RETRY_DELAYS = [
+        0,
+        1000,
+        2000,
+        4000,
+        6000
+      ];
+    
+      let lastError = null;
+    
+    
+      // ------------------------------------------------------------
+      // 読み込み中表示
+      // ------------------------------------------------------------
+      const loadingText =
+        document.querySelector(
+          '#loading-screen p'
+        );
+    
+      if (loadingText) {
+        loadingText.textContent =
+          'スプレッドシートから単語データを読み込み中...';
       }
+    
+    
+      // ------------------------------------------------------------
+      // リトライ
+      // ------------------------------------------------------------
+      for (
+        let attempt = 0;
+        attempt < MAX_RETRIES;
+        attempt++
+      ) {
+    
+        try {
+    
+          // --------------------------------------------------------
+          // 2回目以降は待つ
+          // --------------------------------------------------------
+          if (attempt > 0) {
+    
+            const waitTime =
+              RETRY_DELAYS[attempt] || 3000;
+    
+            if (loadingText) {
+              loadingText.textContent =
+                `データを再読み込み中... (${attempt + 1}/${MAX_RETRIES})`;
+            }
+    
+            await new Promise(resolve =>
+              setTimeout(resolve, waitTime)
+            );
+          }
+    
+    
+          // --------------------------------------------------------
+          // キャッシュ回避用のタイムスタンプ
+          //
+          // Google側の一時的なレスポンスを避ける目的
+          // --------------------------------------------------------
+          const url =
+            `${GAS_API_URL}?action=getInitialData&_=${Date.now()}`;
+    
+    
+          console.log(
+            `GASデータ読み込み ${attempt + 1}/${MAX_RETRIES}`,
+            url
+          );
+    
+    
+          // --------------------------------------------------------
+          // GET
+          // --------------------------------------------------------
+          const res = await fetch(
+            url,
+            {
+              method: 'GET',
+              cache: 'no-store'
+            }
+          );
+    
+    
+          // --------------------------------------------------------
+          // HTTPステータス確認
+          // --------------------------------------------------------
+          if (!res.ok) {
+    
+            throw new Error(
+              `サーバーエラー (HTTP ${res.status})`
+            );
+          }
+    
+    
+          // --------------------------------------------------------
+          // まず text として取得
+          //
+          // いきなり res.json() しない。
+          // HTMLが返ってきた場合でも安全に判定できる。
+          // --------------------------------------------------------
+          const responseText =
+            await res.text();
+    
+          const trimmedText =
+            responseText.trim();
+    
+    
+          // --------------------------------------------------------
+          // JSON解析
+          // --------------------------------------------------------
+          let data;
+    
+          try {
+    
+            data =
+              JSON.parse(trimmedText);
+    
+          } catch (jsonError) {
+    
+            if (
+              trimmedText.startsWith('<!DOCTYPE') ||
+              trimmedText.startsWith('<html') ||
+              trimmedText.startsWith('<HTML')
+            ) {
+    
+              throw new Error(
+                'GASから一時的にHTMLページが返されました。'
+              );
+            }
+    
+            throw new Error(
+              'GASから正しいJSONデータが返されませんでした。'
+            );
+          }
+    
+    
+          // --------------------------------------------------------
+          // GAS側からエラーが返された場合
+          // --------------------------------------------------------
+          if (data && data.error) {
+    
+            throw new Error(
+              data.error
+            );
+          }
+    
+    
+          // --------------------------------------------------------
+          // データチェック
+          // --------------------------------------------------------
+          if (!data || typeof data !== 'object') {
+    
+            throw new Error(
+              'GASから空のデータが返されました。'
+            );
+          }
+    
+    
+          // --------------------------------------------------------
+          // ★ 成功
+          // --------------------------------------------------------
+          console.log(
+            '✅ GASから単語データの読み込みに成功しました。',
+            data
+          );
+    
+    
+          if (loadingText) {
+            loadingText.textContent =
+              '読み込み完了';
+          }
+    
+    
+          onDataLoaded(data);
+    
+          return;
+    
+    
+        } catch (err) {
+    
+          console.warn(
+            `GASデータ読み込み ${attempt + 1}/${MAX_RETRIES} 失敗:`,
+            err
+          );
+    
+          lastError = err;
+        }
+      }
+    
+    
+      // ============================================================
+      // すべて失敗
+      // ============================================================
+      console.error(
+        '❌ GASデータ読み込みに失敗しました。',
+        lastError
+      );
+    
+    
+      if (loadingText) {
+        loadingText.textContent =
+          'データの読み込みに失敗しました';
+      }
+    
+    
+      alert(
+        'データ読み込みに失敗しました。\n\n' +
+        'GASサーバーへの接続を自動で再試行しましたが、' +
+        '正常なデータを取得できませんでした。\n\n' +
+        'ページを再読み込みしてもう一度お試しください。\n\n' +
+        '原因: ' +
+        (
+          lastError
+            ? lastError.message
+            : '不明'
+        )
+      );
     }
 
+    /**
+     * 学習統計をGASから読み込む
+     *
+     * 一時的な404 / HTMLレスポンスに対応して
+     * 自動リトライする。
+     */
     async function loadStatsFromGAS() {
-      try {
-        const res = await fetch(`${GAS_API_URL}?action=getStudyStats`);
-        const stats = await res.json();
-        if (stats) {
-          if (stats.streakDays > 0) {
-            const badge = document.getElementById('streak-badge');
-            badge.textContent = `🔥 ${stats.streakDays}日連続`;
-            badge.classList.remove('hidden');
+    
+      const MAX_RETRIES = 4;
+    
+      const RETRY_DELAYS = [
+        0,
+        1000,
+        2000,
+        4000
+      ];
+    
+      let lastError = null;
+    
+    
+      for (
+        let attempt = 0;
+        attempt < MAX_RETRIES;
+        attempt++
+      ) {
+    
+        try {
+    
+          if (attempt > 0) {
+    
+            await new Promise(resolve =>
+              setTimeout(
+                resolve,
+                RETRY_DELAYS[attempt] || 2000
+              )
+            );
           }
-          document.getElementById('dash-streak').textContent = `${stats.streakDays || 0} 日`;
-          document.getElementById('dash-total-answers').textContent = `${stats.totalAnswers || 0} 回`;
-          document.getElementById('dash-accuracy').textContent = `${stats.accuracy || 0}%`;
+    
+    
+          const url =
+            `${GAS_API_URL}?action=getStudyStats&_=${Date.now()}`;
+    
+    
+          const res = await fetch(
+            url,
+            {
+              method: 'GET',
+              cache: 'no-store'
+            }
+          );
+    
+    
+          if (!res.ok) {
+    
+            throw new Error(
+              `サーバーエラー (HTTP ${res.status})`
+            );
+          }
+    
+    
+          const responseText =
+            await res.text();
+    
+          const trimmedText =
+            responseText.trim();
+    
+    
+          let stats;
+    
+          try {
+    
+            stats =
+              JSON.parse(trimmedText);
+    
+          } catch (jsonError) {
+    
+            throw new Error(
+              'GASから正しいJSONデータが返されませんでした。'
+            );
+          }
+    
+    
+          if (stats && stats.error) {
+            throw new Error(stats.error);
+          }
+    
+    
+          console.log(
+            '✅ 学習統計の読み込み成功',
+            stats
+          );
+    
+    
+          if (stats) {
+    
+            if (stats.streakDays > 0) {
+    
+              const badge =
+                document.getElementById(
+                  'streak-badge'
+                );
+    
+              if (badge) {
+    
+                badge.textContent =
+                  `🔥 ${stats.streakDays}日連続`;
+    
+                badge.classList.remove(
+                  'hidden'
+                );
+              }
+            }
+          }
+    
+    
+          return;
+    
+    
+        } catch (err) {
+    
+          console.warn(
+            `学習統計読み込み ${attempt + 1}/${MAX_RETRIES} 失敗:`,
+            err
+          );
+    
+          lastError = err;
         }
-      } catch (err) {
-        console.warn('Stats load error:', err);
       }
+    
+    
+      console.warn(
+        '学習統計を読み込めませんでした。',
+        lastError
+      );
     }
 
     // 初期化

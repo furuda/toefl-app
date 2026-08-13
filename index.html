@@ -1305,23 +1305,29 @@
     /**
      * 学習統計をGASから読み込む
      *
-     * 一時的な404 / HTMLレスポンスに対応して
-     * 自動リトライする。
+     * ・一時的な404に対応
+     * ・HTMLレスポンスに対応
+     * ・自動リトライ
+     * ・ダッシュボード統計を必ず更新
      */
     async function loadStatsFromGAS() {
     
-      const MAX_RETRIES = 4;
+      const MAX_RETRIES = 5;
     
       const RETRY_DELAYS = [
         0,
         1000,
         2000,
-        4000
+        4000,
+        6000
       ];
     
       let lastError = null;
     
     
+      // ============================================================
+      // リトライ
+      // ============================================================
       for (
         let attempt = 0;
         attempt < MAX_RETRIES;
@@ -1330,21 +1336,35 @@
     
         try {
     
+          // --------------------------------------------------------
+          // 2回目以降は少し待つ
+          // --------------------------------------------------------
           if (attempt > 0) {
     
             await new Promise(resolve =>
               setTimeout(
                 resolve,
-                RETRY_DELAYS[attempt] || 2000
+                RETRY_DELAYS[attempt] || 3000
               )
             );
           }
     
     
+          // --------------------------------------------------------
+          // キャッシュ回避
+          // --------------------------------------------------------
           const url =
             `${GAS_API_URL}?action=getStudyStats&_=${Date.now()}`;
     
     
+          console.log(
+            `学習統計読み込み ${attempt + 1}/${MAX_RETRIES}`
+          );
+    
+    
+          // --------------------------------------------------------
+          // GET
+          // --------------------------------------------------------
           const res = await fetch(
             url,
             {
@@ -1354,6 +1374,9 @@
           );
     
     
+          // --------------------------------------------------------
+          // HTTPエラー
+          // --------------------------------------------------------
           if (!res.ok) {
     
             throw new Error(
@@ -1362,6 +1385,9 @@
           }
     
     
+          // --------------------------------------------------------
+          // textで取得
+          // --------------------------------------------------------
           const responseText =
             await res.text();
     
@@ -1369,6 +1395,9 @@
             responseText.trim();
     
     
+          // --------------------------------------------------------
+          // JSON解析
+          // --------------------------------------------------------
           let stats;
     
           try {
@@ -1378,44 +1407,135 @@
     
           } catch (jsonError) {
     
+            if (
+              trimmedText.startsWith('<!DOCTYPE') ||
+              trimmedText.startsWith('<html') ||
+              trimmedText.startsWith('<HTML')
+            ) {
+    
+              throw new Error(
+                'GASから一時的にHTMLページが返されました。'
+              );
+            }
+    
             throw new Error(
               'GASから正しいJSONデータが返されませんでした。'
             );
           }
     
     
+          // --------------------------------------------------------
+          // GAS側エラー
+          // --------------------------------------------------------
           if (stats && stats.error) {
-            throw new Error(stats.error);
+    
+            throw new Error(
+              stats.error
+            );
           }
     
     
-          console.log(
-            '✅ 学習統計の読み込み成功',
-            stats
-          );
-    
-    
+          // ========================================================
+          // ★★★ ここが重要 ★★★
+          //
+          // ダッシュボード統計を更新
+          // ========================================================
           if (stats) {
     
-            if (stats.streakDays > 0) {
+            // ------------------------------------------------------
+            // 数値を安全に変換
+            // ------------------------------------------------------
+            const streakDays =
+              Number(stats.streakDays) || 0;
     
-              const badge =
-                document.getElementById(
-                  'streak-badge'
-                );
+            const totalAnswers =
+              Number(stats.totalAnswers) || 0;
     
-              if (badge) {
+            const accuracy =
+              Number(stats.accuracy) || 0;
+    
+    
+            // ------------------------------------------------------
+            // ① 連続学習
+            // ------------------------------------------------------
+            const streakEl =
+              document.getElementById(
+                'dash-streak'
+              );
+    
+            if (streakEl) {
+    
+              streakEl.textContent =
+                `${streakDays} 日`;
+            }
+    
+    
+            // ------------------------------------------------------
+            // ② 通算解答数
+            // ------------------------------------------------------
+            const totalAnswersEl =
+              document.getElementById(
+                'dash-total-answers'
+              );
+    
+            if (totalAnswersEl) {
+    
+              totalAnswersEl.textContent =
+                `${totalAnswers} 回`;
+            }
+    
+    
+            // ------------------------------------------------------
+            // ③ 平均正解率
+            // ------------------------------------------------------
+            const accuracyEl =
+              document.getElementById(
+                'dash-accuracy'
+              );
+    
+            if (accuracyEl) {
+    
+              accuracyEl.textContent =
+                `${accuracy}%`;
+            }
+    
+    
+            // ------------------------------------------------------
+            // ④ 上部の連続学習バッジ
+            // ------------------------------------------------------
+            const badge =
+              document.getElementById(
+                'streak-badge'
+              );
+    
+            if (badge) {
+    
+              if (streakDays > 0) {
     
                 badge.textContent =
-                  `🔥 ${stats.streakDays}日連続`;
+                  `🔥 ${streakDays}日連続`;
     
                 badge.classList.remove(
+                  'hidden'
+                );
+    
+              } else {
+    
+                badge.classList.add(
                   'hidden'
                 );
               }
             }
           }
     
+    
+          // --------------------------------------------------------
+          // 成功
+          // --------------------------------------------------------
+          console.log(
+            '✅ 学習統計の読み込み成功:',
+            stats
+          );
     
           return;
     
@@ -1432,10 +1552,41 @@
       }
     
     
+      // ============================================================
+      // 全リトライ失敗
+      //
+      // 統計が取得できなくてもアプリ本体は使用できるようにする。
+      // ============================================================
       console.warn(
-        '学習統計を読み込めませんでした。',
+        '⚠️ 学習統計の読み込みに失敗しました。',
         lastError
       );
+    
+    
+      // ------------------------------------------------------------
+      // 取得できなかった場合でも0を表示
+      // ------------------------------------------------------------
+      const streakEl =
+        document.getElementById('dash-streak');
+    
+      const totalAnswersEl =
+        document.getElementById('dash-total-answers');
+    
+      const accuracyEl =
+        document.getElementById('dash-accuracy');
+    
+    
+      if (streakEl) {
+        streakEl.textContent = '0 日';
+      }
+    
+      if (totalAnswersEl) {
+        totalAnswersEl.textContent = '0 回';
+      }
+    
+      if (accuracyEl) {
+        accuracyEl.textContent = '0%';
+      }
     }
 
     // 初期化

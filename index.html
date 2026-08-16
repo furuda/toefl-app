@@ -1854,7 +1854,14 @@
             ? '<span class="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">要復習</span>'
             : '<span class="text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded font-bold">未学習</span>';
     
-          const allMeanings = w.details ? w.details.map(d => d.meaningJa).filter(Boolean).join(' / ') : (detail.meaningJa || '意味未登録');
+          // 修正前:
+          // const allMeanings = w.details ? w.details.map(d => d.meaningJa).filter(Boolean).join(' / ') : (detail.meaningJa || '意味未登録');
+          
+          // 修正後（重複を排除して連結する）:
+          const rawMeanings = w.details ? w.details.map(d => d.meaningJa).filter(Boolean) : [detail.meaningJa || '意味未登録'];
+          // 重複を削除するための処理
+          const uniqueMeanings = Array.from(new Set(rawMeanings.map(m => m.trim())));
+          const allMeanings = uniqueMeanings.join(' / ');
     
           const item = document.createElement('div');
           item.className = 'p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1';

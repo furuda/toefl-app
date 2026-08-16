@@ -1839,10 +1839,10 @@
     function openStageWordsModal(stageName) {
       const words = App.allWords.filter(w => w.stage === stageName);
       document.getElementById('stage-words-title').innerHTML = `<span>📚</span><span>${stageName} 単語一覧 (全 ${words.length} 単語)</span>`;
-
+    
       const listEl = document.getElementById('stage-words-list');
       listEl.innerHTML = '';
-
+    
       if (words.length === 0) {
         listEl.innerHTML = '<div class="text-center text-slate-400 py-4">このステージには単語が登録されていません。</div>';
       } else {
@@ -1853,11 +1853,12 @@
             : w.status === 2 
             ? '<span class="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">要復習</span>'
             : '<span class="text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded font-bold">未学習</span>';
-
-          // openStageWordsModal 内、item（単語一覧の各行）生成部分
+    
+          const allMeanings = w.details ? w.details.map(d => d.meaningJa).filter(Boolean).join(' / ') : (detail.meaningJa || '意味未登録');
+    
           const item = document.createElement('div');
           item.className = 'p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1';
-          item.dataset.ownerWord = w.word; // ★ 追加
+          item.dataset.ownerWord = w.word;
           item.innerHTML = `
             <div class="flex items-center justify-between">
               <div class="flex items-center space-x-2">
@@ -1869,13 +1870,40 @@
                 ${(w.mistakes || 0) > 0 ? `<span class="text-[10px] bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded font-bold">${w.mistakes}回ミス</span>` : ''}
               </div>
             </div>
-            <div class="text-[11px] text-slate-600 font-medium">${escapeHtml(detail.meaningJa || '意味未登録')}</div>
+            <!-- 意味を最初は隠し、左クリックで3秒表示するエリア -->
+            <div class="meaning-reveal-box cursor-pointer bg-slate-200/70 hover:bg-slate-200 rounded-lg p-1.5 text-[11px] text-slate-500 transition text-center select-none"
+                 onclick="revealStageWordMeaning(this, '${escapeHtml(allMeanings)}')">
+              🔒 クリックして意味を表示 (3秒)
+            </div>
           `;
           listEl.appendChild(item);
         });
       }
-
+    
       document.getElementById('stage-words-modal').classList.remove('hidden');
+    }
+
+    /**
+     * ステージ一覧の単語の意味を左クリックで3秒間だけ表示する関数
+     */
+    function revealStageWordMeaning(element, meaningText) {
+      // すでにタイマーが動いている場合はクリア
+      if (element.dataset.timerId) {
+        clearTimeout(Number(element.dataset.timerId));
+      }
+    
+      // 意味を表示
+      element.className = 'meaning-reveal-box bg-indigo-50 border border-indigo-200 rounded-lg p-1.5 text-[11px] text-indigo-900 font-bold transition text-center select-text';
+      element.textContent = `💡 ${meaningText}`;
+    
+      // 3秒後に再び隠す
+      const timerId = setTimeout(() => {
+        element.className = 'meaning-reveal-box cursor-pointer bg-slate-200/70 hover:bg-slate-200 rounded-lg p-1.5 text-[11px] text-slate-500 transition text-center select-none';
+        element.textContent = '🔒 クリックして意味を表示 (3秒)';
+        delete element.dataset.timerId;
+      }, 3000);
+    
+      element.dataset.timerId = String(timerId);
     }
 
     function closeStageWordsModal() {

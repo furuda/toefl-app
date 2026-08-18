@@ -1975,25 +1975,23 @@
       updateFilteredWordCount();
     }
 
+    /**
+     * 範囲指定（単語ID）に対応したフィルタリング
+     */
     function filterWords() {
       const imp = document.getElementById('importance-select').value;
       const mode = document.getElementById('mode-select').value;
       const weakThreshold = parseInt(document.getElementById('weak-count-input').value, 10) || 1;
       const today = getTodayDateString();
     
-      // 範囲指定（1ベースのインデックス）
-      const rangeStart = parseInt(document.getElementById('range-start-input').value, 10);
-      const rangeEnd = parseInt(document.getElementById('range-end-input').value, 10);
+      // IDによる範囲指定（文字列または数値として比較）
+      const rangeStart = document.getElementById('range-start-input').value.trim();
+      const rangeEnd = document.getElementById('range-end-input').value.trim();
     
-      // 1. まずステージ・重要性・学習モードでフィルタリング
-      const baseFiltered = App.allWords.filter(w => {
-        // ステージ選択フィルター
+      return App.allWords.filter(w => {
+        // 1. ステージ・重要性・モードのフィルター
         if (!App.selectedStages.has(w.stage)) return false;
-    
-        // 重要性フィルター
         if (imp !== 'ALL' && w.importance !== imp) return false;
-    
-        // 学習モードフィルター
         if (mode === 'review') {
           return w.status === 2 || (w.nextReviewDate && w.nextReviewDate <= today);
         } else if (mode === 'unlearned') {
@@ -2001,25 +1999,17 @@
         } else if (mode === 'weak') {
           return (w.mistakes || 0) >= weakThreshold;
         }
-        return true;
-      });
     
-      // 2. 範囲指定（単語番号）が未入力ならそのまま返す
-      if (isNaN(rangeStart) && isNaN(rangeEnd)) {
-        return baseFiltered;
-      }
-    
-      // 3. 範囲指定がある場合、各ステージごとに番号を割り振って範囲内のみを抽出
-      const stageCounters = {};
-      return baseFiltered.filter(w => {
-        if (!stageCounters[w.stage]) {
-          stageCounters[w.stage] = 0;
+        // 2. IDによる範囲指定フィルター
+        // IDを数値変換して比較（数値IDの場合）
+        const currentId = parseInt(w.id, 10);
+        
+        if (rangeStart !== "" && !isNaN(parseInt(rangeStart, 10))) {
+          if (currentId < parseInt(rangeStart, 10)) return false;
         }
-        stageCounters[w.stage]++;
-        const wordNumberInStage = stageCounters[w.stage];
-    
-        if (!isNaN(rangeStart) && rangeStart > 0 && wordNumberInStage < rangeStart) return false;
-        if (!isNaN(rangeEnd) && rangeEnd > 0 && wordNumberInStage > rangeEnd) return false;
+        if (rangeEnd !== "" && !isNaN(parseInt(rangeEnd, 10))) {
+          if (currentId > parseInt(rangeEnd, 10)) return false;
+        }
     
         return true;
       });

@@ -477,7 +477,7 @@
             </div>
             <!-- 逆方向モード用：裏面に英単語を大きく表示 -->
             <div id="card-back-word" class="hidden text-center mb-3">
-              <h3 class="text-3xl md:text-4xl font-extrabold text-slate-800 tracking-wide">Word</h3>
+              <h3 id="card-back-word-text" class="text-3xl md:text-4xl font-extrabold text-slate-800 tracking-wide">Word</h3>
               <button onclick="speakCurrentWord()" class="mt-1 text-xs text-indigo-600 bg-white px-2.5 py-1 rounded-full shadow-sm inline-flex items-center gap-1">🔊 発音を聞く</button>
             </div>
             <div id="card-derived-list" class="space-y-2.5 text-left flex-grow">
@@ -2234,6 +2234,9 @@
       document.getElementById('card-review-count').textContent = item.reviewCount || 0;
       document.getElementById('card-mistakes').textContent = item.mistakes || 0;
       document.getElementById('card-next-review').textContent = item.nextReviewDate || '未設定';
+      // ★ 裏面の単語表示（逆方向モード用）にも必ず単語を設定する
+      const backWordText = document.getElementById('card-back-word-text');
+      if (backWordText) backWordText.textContent = item.word;
 
       // ✨ 逆方向モード：表面に日本語の意味を表示し、英単語は裏面に出す
       const meaningJaSet = new Set();

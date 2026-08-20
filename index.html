@@ -642,7 +642,7 @@
 
   <script>
     // 🔗 ここにご自身の GAS ウェブアプリ URL を設定してください
-    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbx8QzOzUWCn0t8Wwy-3jrUR212OLdMyhPK1QsTegGbbshuDTmaC07xspR-UNALIjT4lCw/exec";
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbz9WO9B3pyUkJN2eDdlAkOgaWgGA5qSDm_Qee5EOGx6Drqm9e13YTup5vcBYK9op80BGw/exec";
 
     const INTERVALS = [1, 3, 7, 14, 30, 60, 90];
     const STORAGE_KEY = 'vocab_app_paused_session_v2';
@@ -677,7 +677,9 @@
       // ✨ 追加：セッション制限時間管理用
       sessionTimer: null,
       sessionSecondsLeft: 0,
-      totalSessionSeconds: 0
+      totalSessionSeconds: 0,
+      // カード遷移アニメーション中の連打防止フラグ
+      isTransitioning: false
     };
 
     function escapeHtml(str) {
@@ -1849,26 +1851,48 @@
         const uniqueMeanings = Array.from(new Set(detailList.map(d => d.meaningJa).filter(Boolean).map(m => m.trim())));
         const allMeanings = uniqueMeanings.join(' / ') || '意味未登録';
     
+        // ★ インライン onclick への文字列埋め込みをやめ、DOM 生成 + addEventListener に変更。
+        //   単語や意味にアポストロフィ（don't など）や引用符が含まれても安全。
         const item = document.createElement('div');
         item.className = 'p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2';
-        item.innerHTML = `
-          <div class="flex items-center justify-between">
-            <div class="flex items-center space-x-2">
-              <strong class="text-sm text-slate-800 font-bold">${escapeHtml(w.word)}</strong>
-              <button onclick="speakText('${escapeHtml(w.word)}')" class="text-xs text-indigo-600">🔊</button>
-            </div>
-            <!-- ステータス変更プルダウン -->
-            <select onchange="updateWordStatus('${w.id}', this.value)" class="text-[10px] font-bold border border-slate-300 rounded-lg p-1 outline-none focus:ring-1 focus:ring-indigo-500">
-              <option value="1" ${w.status == 1 ? 'selected' : ''}>✅ 学習済み</option>
-              <option value="2" ${w.status == 2 ? 'selected' : ''}>⚠️ 要復習</option>
-              <option value="3" ${w.status == 3 ? 'selected' : ''}>🆕 未学習</option>
-            </select>
-          </div>
-          <div class="meaning-reveal-box cursor-pointer bg-slate-200/70 hover:bg-slate-200 rounded-lg p-1.5 text-[11px] text-slate-500 transition text-center select-none"
-               onclick="revealStageWordMeaning(this, '${escapeHtml(allMeanings)}')">
-            🔒 クリックして意味を表示 (3秒)
-          </div>
+    
+        const headRow = document.createElement('div');
+        headRow.className = 'flex items-center justify-between';
+    
+        const leftBox = document.createElement('div');
+        leftBox.className = 'flex items-center space-x-2';
+        const wordStrong = document.createElement('strong');
+        wordStrong.className = 'text-sm text-slate-800 font-bold';
+        wordStrong.textContent = w.word;
+        const speakBtn = document.createElement('button');
+        speakBtn.type = 'button';
+        speakBtn.className = 'text-xs text-indigo-600';
+        speakBtn.textContent = '🔊';
+        speakBtn.addEventListener('click', () => speakText(w.word));
+        leftBox.appendChild(wordStrong);
+        leftBox.appendChild(speakBtn);
+    
+        // ステータス変更プルダウン
+        const select = document.createElement('select');
+        select.className = 'text-[10px] font-bold border border-slate-300 rounded-lg p-1 outline-none focus:ring-1 focus:ring-indigo-500';
+        select.innerHTML = `
+          <option value="1" ${w.status == 1 ? 'selected' : ''}>✅ 学習済み</option>
+          <option value="2" ${w.status == 2 ? 'selected' : ''}>⚠️ 要復習</option>
+          <option value="3" ${w.status == 3 ? 'selected' : ''}>🆕 未学習</option>
         `;
+        select.addEventListener('change', () => updateWordStatus(w.id, select.value));
+    
+        headRow.appendChild(leftBox);
+        headRow.appendChild(select);
+        item.appendChild(headRow);
+    
+        // 意味の表示（3秒）ボックス
+        const revealBox = document.createElement('div');
+        revealBox.className = 'meaning-reveal-box cursor-pointer bg-slate-200/70 hover:bg-slate-200 rounded-lg p-1.5 text-[11px] text-slate-500 transition text-center select-none';
+        revealBox.textContent = '🔒 クリックして意味を表示 (3秒)';
+        revealBox.addEventListener('click', () => revealStageWordMeaning(revealBox, allMeanings));
+        item.appendChild(revealBox);
+    
         listEl.appendChild(item);
       });
     
@@ -2028,28 +2052,29 @@
       // IDによる範囲指定（文字列または数値として比較）
       const rangeStart = document.getElementById('range-start-input').value.trim();
       const rangeEnd = document.getElementById('range-end-input').value.trim();
+      const startNum = parseInt(rangeStart, 10);
+      const endNum = parseInt(rangeEnd, 10);
+      const hasStart = rangeStart !== "" && !isNaN(startNum);
+      const hasEnd = rangeEnd !== "" && !isNaN(endNum);
     
       return App.allWords.filter(w => {
-        // 1. ステージ・重要性・モードのフィルター
+        // 1. ステージ・重要性のフィルター
         if (!App.selectedStages.has(w.stage)) return false;
         if (imp !== 'ALL' && w.importance !== imp) return false;
+    
+        // 2. IDによる範囲指定フィルター（★ すべてのモードで適用する）
+        //    以前は review / unlearned / weak モードで範囲指定が無視されていた
+        const currentId = parseInt(w.id, 10);
+        if (hasStart && currentId < startNum) return false;
+        if (hasEnd && currentId > endNum) return false;
+    
+        // 3. モード別フィルター
         if (mode === 'review') {
           return w.status === 2 || (w.nextReviewDate && w.nextReviewDate <= today);
         } else if (mode === 'unlearned') {
           return w.status === 3;
         } else if (mode === 'weak') {
           return (w.mistakes || 0) >= weakThreshold;
-        }
-    
-        // 2. IDによる範囲指定フィルター
-        // IDを数値変換して比較（数値IDの場合）
-        const currentId = parseInt(w.id, 10);
-        
-        if (rangeStart !== "" && !isNaN(parseInt(rangeStart, 10))) {
-          if (currentId < parseInt(rangeStart, 10)) return false;
-        }
-        if (rangeEnd !== "" && !isNaN(parseInt(rangeEnd, 10))) {
-          if (currentId > parseInt(rangeEnd, 10)) return false;
         }
     
         return true;
@@ -2123,6 +2148,7 @@
       App.testResults = [];
       App.stats = { correct: 0, wrong: 0, testCorrect: 0, testWrong: 0 };
       App.isTesting = false;
+      App.isTransitioning = false;
     
       document.getElementById('setup-card').classList.add('hidden');
       document.getElementById('pause-btn').classList.remove('hidden');
@@ -2262,50 +2288,72 @@
       }
     }
 
+    /**
+     * ローカルタイムゾーンで「今日から days 日後」の日付文字列 (yyyy-MM-dd) を返す。
+     * toISOString()（UTC）を使うと日本時間の午前中に前日扱いになるため使わない。
+     */
+    function getDateAfterDays(days) {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+
     function handleAnswer(isCorrect, extra = {}) {
+      // 連打・ダブルトリガー防止：スワイプアニメーション中は次の回答を受け付けない
+      if (App.isTransitioning) return;
+      App.isTransitioning = true;
+
       const card = document.getElementById('flashcard');
       const item = App.queue[App.index];
-    
+
       card.classList.add(isCorrect ? 'swipe-right' : 'swipe-left');
       const today = getTodayDateString();
-    
+
+      // ★ セッション内で同一単語を複数回回答した場合、
+      //    前回の結果（間違い数・復習回数）を引き継いで加算する。
+      //    （以前は item.mistakes / item.reviewCount を基準に上書きしていたため、
+      //      1回目に間違えた後に2回目で覚えた場合などで増分が失われていた）
+      const existingIdx = App.results.findIndex(r => r.id === item.id);
+      const prev = existingIdx >= 0 ? App.results[existingIdx] : null;
+      const baseReviewCount = prev ? prev.reviewCount : (item.reviewCount || 0);
+      const baseMistakes = prev ? prev.mistakes : (item.mistakes || 0);
+
       if (isCorrect) {
         App.stats.correct++;
-        const nextRevCount = (item.reviewCount || 0) + 1;
+        const nextRevCount = baseReviewCount + 1;
         const intervalDays = INTERVALS[Math.min(nextRevCount - 1, INTERVALS.length - 1)];
-        const nextDate = new Date();
-        nextDate.setDate(nextDate.getDate() + intervalDays);
-        const nextDateStr = nextDate.toISOString().split('T')[0];
-    
-        const existingIdx = App.results.findIndex(r => r.id === item.id);
+        const nextDateStr = getDateAfterDays(intervalDays);
+
         const resultData = {
           id: item.id,
           word: item.word,
           stage: item.stage,
           previousStatus: item.status,
           status: 1,
-          mistakes: item.mistakes || 0,
+          mistakes: baseMistakes,
           reviewCount: nextRevCount,
           nextReviewDate: nextDateStr,
           lastReviewDate: today,
           isCorrect: true,
           ...extra
         };
-    
+
         if (existingIdx >= 0) {
           App.results[existingIdx] = resultData;
         } else {
           App.results.push(resultData);
         }
-    
+
         if (!App.testQueue.some(x => x.id === item.id)) {
           App.testQueue.push(item);
         }
       } else {
         App.stats.wrong++;
-        const newMistakes = (item.mistakes || 0) + 1;
-    
-        const existingIdx = App.results.findIndex(r => r.id === item.id);
+        const newMistakes = baseMistakes + 1;
+
         const resultData = {
           id: item.id,
           word: item.word,
@@ -2313,24 +2361,24 @@
           previousStatus: item.status,
           status: 2,
           mistakes: newMistakes,
-          reviewCount: item.reviewCount || 0,
+          reviewCount: baseReviewCount,
           nextReviewDate: today,
           lastReviewDate: today,
           isCorrect: false,
           ...extra
         };
-    
+
         if (existingIdx >= 0) {
           App.results[existingIdx] = resultData;
         } else {
           App.results.push(resultData);
         }
-    
+
         if (!App.testQueue.some(x => x.id === item.id)) {
           App.testQueue.push(item);
         }
       }
-    
+
       // ★【追加】回答直後に「覚えた数」とヘッダー表示を即時計算・更新
       const total = App.roundBoundaryIndex || App.queue.length;
       const learnedCount = App.results.filter(r => r.isCorrect).length;
@@ -2338,31 +2386,35 @@
       if (indicatorEl) {
         indicatorEl.textContent = `${learnedCount} (覚えた数) / ${total}`;
       }
-    
+
       setTimeout(() => {
-        App.index++;
-    
-        if (App.index >= App.queue.length) {
-          const learnedIds = new Set(
-            App.results.filter(r => r.isCorrect).map(r => r.id)
-          );
-          const remainingWords = App.queue.filter(w => !learnedIds.has(w.id));
-    
-          if (remainingWords.length > 0) {
-            const mode = document.getElementById('mode-select').value;
-            if (mode !== 'id_order') {
-              remainingWords.sort(() => Math.random() - 0.5);
+        try {
+          App.index++;
+
+          if (App.index >= App.queue.length) {
+            const learnedIds = new Set(
+              App.results.filter(r => r.isCorrect).map(r => r.id)
+            );
+            const remainingWords = App.queue.filter(w => !learnedIds.has(w.id));
+
+            if (remainingWords.length > 0) {
+              const mode = document.getElementById('mode-select').value;
+              if (mode !== 'id_order') {
+                remainingWords.sort(() => Math.random() - 0.5);
+              }
+
+              App.queue = remainingWords;
+              App.index = 0;
+              showCurrentCard();
+            } else {
+              // すべて覚えきったら小テストへ
+              startTestSession();
             }
-    
-            App.queue = remainingWords;
-            App.index = 0;
-            showCurrentCard();
           } else {
-            // すべて覚えきったら小テストへ
-            startTestSession();
+            showCurrentCard();
           }
-        } else {
-          showCurrentCard();
+        } finally {
+          App.isTransitioning = false;
         }
       }, 250);
     }
@@ -2966,6 +3018,12 @@
       }, 1000);
     
       const item = App.testQueue[App.testIndex];
+      // ★ 中断データ復元時などでキューが空の場合は結果画面へ（クラッシュ防止）
+      if (!item) {
+        if (App.testTimer) clearInterval(App.testTimer);
+        showResults();
+        return;
+      }
       const total = App.testQueue.length;
     
       // ★ 小テストエリア内の進捗表示（1 / 5, 2 / 5 ...）
@@ -3025,6 +3083,7 @@
       allChoices.forEach((choiceText, idx) => {
         const btn = document.createElement('button');
         btn.className = 'test-choice-btn w-full bg-white hover:bg-indigo-50/50 border-2 border-slate-200 rounded-xl p-3.5 text-left text-xs font-semibold text-slate-800 transition flex items-center space-x-2';
+        btn.dataset.choiceText = choiceText; // ★ 正解判定・ハイライト用に完全一致で比較する
         btn.onclick = () => selectTestChoice(btn, choiceText === App.currentTestCorrectAnswer, App.currentTestCorrectAnswer);
         btn.innerHTML = `
           <span class="w-6 h-6 rounded-full bg-slate-100 text-slate-600 font-bold flex items-center justify-center text-xs shrink-0">${idx + 1}</span>
@@ -3070,7 +3129,10 @@
         App.stats.testWrong++;
     
         choiceBtns.forEach(btn => {
-          if (btn.textContent.includes(correctMeaningText)) {
+          // ★ data-choiceText で完全一致するボタンだけを正解としてハイライト
+          //   （以前は textContent の部分一致だったため、
+          //     選択肢テキストが別の選択肢の部分文字列になると誤ハイライトした）
+          if (btn.dataset.choiceText === correctMeaningText) {
             btn.classList.remove('border-slate-200');
             btn.classList.add('border-emerald-500', 'bg-emerald-50');
           }
@@ -3584,6 +3646,7 @@
         App.testResults = state.testResults || [];
         App.stats = state.stats || { correct: 0, wrong: 0, testCorrect: 0, testWrong: 0 };
         App.isTesting = !!state.isTesting;
+        App.isTransitioning = false;
         App.totalSessionSeconds = state.totalSessionSeconds || 0;
         App.sessionSecondsLeft = state.sessionSecondsLeft || 0;
         

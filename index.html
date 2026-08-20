@@ -642,7 +642,7 @@
 
   <script>
     // 🔗 ここにご自身の GAS ウェブアプリ URL を設定してください
-    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzZRBMCzKb96VRQdD-9DTDNDQuJ9NTF8rSUX5GezuhP4PV_6ecjsuT3nWzqPNaPOY3eMg/exec";
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbx8QzOzUWCn0t8Wwy-3jrUR212OLdMyhPK1QsTegGbbshuDTmaC07xspR-UNALIjT4lCw/exec";
 
     const INTERVALS = [1, 3, 7, 14, 30, 60, 90];
     const STORAGE_KEY = 'vocab_app_paused_session_v2';
@@ -1876,18 +1876,27 @@
     }
 
     /**
-     * モーダル内からのステータス変更を反映する関数
+     * モーダル内からのステータス変更を反映し、学習記録用の結果配列に追加する
      */
     function updateWordStatus(wordId, newStatus) {
       const wordObj = App.allWords.find(w => w.id === wordId);
       if (wordObj) {
+        const oldStatus = wordObj.status;
         wordObj.status = parseInt(newStatus, 10);
-        // UIを最新に保つためにダッシュボードを再描画
-        renderDashboard();
         
-        // 【重要】スプレッドシートへ即時反映したい場合はここで保存処理を呼ぶか、
-        // あるいはモーダルが閉じられた時にまとめて保存するロジックを組む必要があります。
-        // 今回は軽快さを優先し、Appの状態のみ更新しています。
+        // 学習記録（保存時）用のデータを作成して App.results に追加
+        const today = getTodayDateString();
+        App.results.push({
+          id: wordObj.id,
+          word: wordObj.word,
+          stage: wordObj.stage,
+          previousStatus: oldStatus,
+          status: wordObj.status,
+          isCorrect: false, // セッションの正誤とは区別するため
+          note: "手動ステータス変更" // 記録用にメモを追加
+        });
+        
+        renderDashboard();
         showToast(`✅ ステータスを更新しました`, 'success');
       }
     }

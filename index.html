@@ -1843,51 +1843,53 @@
       const listEl = document.getElementById('stage-words-list');
       listEl.innerHTML = '';
     
-      if (words.length === 0) {
-        listEl.innerHTML = '<div class="text-center text-slate-400 py-4">このステージには単語が登録されていません。</div>';
-      } else {
-        words.forEach(w => {
-          const detail = (w.details && w.details[0]) ? w.details[0] : {};
-          const statusBadge = w.status === 1 
-            ? '<span class="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold">学習済み</span>' 
-            : w.status === 2 
-            ? '<span class="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">要復習</span>'
-            : '<span class="text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded font-bold">未学習</span>';
+      words.forEach(w => {
+        // 意味の重複排除
+        const detailList = w.details || [];
+        const uniqueMeanings = Array.from(new Set(detailList.map(d => d.meaningJa).filter(Boolean).map(m => m.trim())));
+        const allMeanings = uniqueMeanings.join(' / ') || '意味未登録';
     
-          // 修正前:
-          // const allMeanings = w.details ? w.details.map(d => d.meaningJa).filter(Boolean).join(' / ') : (detail.meaningJa || '意味未登録');
-          
-          // 修正後（重複を排除して連結する）:
-          const rawMeanings = w.details ? w.details.map(d => d.meaningJa).filter(Boolean) : [detail.meaningJa || '意味未登録'];
-          // 重複を削除するための処理
-          const uniqueMeanings = Array.from(new Set(rawMeanings.map(m => m.trim())));
-          const allMeanings = uniqueMeanings.join(' / ');
-    
-          const item = document.createElement('div');
-          item.className = 'p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1';
-          item.dataset.ownerWord = w.word;
-          item.innerHTML = `
-            <div class="flex items-center justify-between">
-              <div class="flex items-center space-x-2">
-                <strong class="text-sm text-slate-800 font-bold">${escapeHtml(w.word)}</strong>
-                <button onclick="speakText('${escapeHtml(w.word)}')" class="text-xs text-indigo-600">🔊</button>
-              </div>
-              <div class="flex items-center space-x-1.5">
-                ${statusBadge}
-                ${(w.mistakes || 0) > 0 ? `<span class="text-[10px] bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded font-bold">${w.mistakes}回ミス</span>` : ''}
-              </div>
+        const item = document.createElement('div');
+        item.className = 'p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2';
+        item.innerHTML = `
+          <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+              <strong class="text-sm text-slate-800 font-bold">${escapeHtml(w.word)}</strong>
+              <button onclick="speakText('${escapeHtml(w.word)}')" class="text-xs text-indigo-600">🔊</button>
             </div>
-            <!-- 意味を最初は隠し、左クリックで3秒表示するエリア -->
-            <div class="meaning-reveal-box cursor-pointer bg-slate-200/70 hover:bg-slate-200 rounded-lg p-1.5 text-[11px] text-slate-500 transition text-center select-none"
-                 onclick="revealStageWordMeaning(this, '${escapeHtml(allMeanings)}')">
-              🔒 クリックして意味を表示 (3秒)
-            </div>
-          `;
-          listEl.appendChild(item);
-        });
-      }
+            <!-- ステータス変更プルダウン -->
+            <select onchange="updateWordStatus('${w.id}', this.value)" class="text-[10px] font-bold border border-slate-300 rounded-lg p-1 outline-none focus:ring-1 focus:ring-indigo-500">
+              <option value="1" ${w.status == 1 ? 'selected' : ''}>✅ 学習済み</option>
+              <option value="2" ${w.status == 2 ? 'selected' : ''}>⚠️ 要復習</option>
+              <option value="3" ${w.status == 3 ? 'selected' : ''}>🆕 未学習</option>
+            </select>
+          </div>
+          <div class="meaning-reveal-box cursor-pointer bg-slate-200/70 hover:bg-slate-200 rounded-lg p-1.5 text-[11px] text-slate-500 transition text-center select-none"
+               onclick="revealStageWordMeaning(this, '${escapeHtml(allMeanings)}')">
+            🔒 クリックして意味を表示 (3秒)
+          </div>
+        `;
+        listEl.appendChild(item);
+      });
     
       document.getElementById('stage-words-modal').classList.remove('hidden');
+    }
+
+    /**
+     * モーダル内からのステータス変更を反映する関数
+     */
+    function updateWordStatus(wordId, newStatus) {
+      const wordObj = App.allWords.find(w => w.id === wordId);
+      if (wordObj) {
+        wordObj.status = parseInt(newStatus, 10);
+        // UIを最新に保つためにダッシュボードを再描画
+        renderDashboard();
+        
+        // 【重要】スプレッドシートへ即時反映したい場合はここで保存処理を呼ぶか、
+        // あるいはモーダルが閉じられた時にまとめて保存するロジックを組む必要があります。
+        // 今回は軽快さを優先し、Appの状態のみ更新しています。
+        showToast(`✅ ステータスを更新しました`, 'success');
+      }
     }
 
     /**

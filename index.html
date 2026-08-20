@@ -1876,28 +1876,58 @@
     }
 
     /**
-     * モーダル内からのステータス変更を反映し、学習記録用の結果配列に追加する
+     * モーダル内からのステータス変更を即時反映し、GASへ保存する関数
      */
-    function updateWordStatus(wordId, newStatus) {
+    async function updateWordStatus(wordId, newStatus) {
       const wordObj = App.allWords.find(w => w.id === wordId);
-      if (wordObj) {
-        const oldStatus = wordObj.status;
-        wordObj.status = parseInt(newStatus, 10);
-        
-        // 学習記録（保存時）用のデータを作成して App.results に追加
-        const today = getTodayDateString();
-        App.results.push({
+      if (!wordObj) return;
+    
+      const oldStatus = wordObj.status;
+      const parsedNewStatus = parseInt(newStatus, 10);
+      wordObj.status = parsedNewStatus;
+    
+      // 送信用の一時データを作成
+      const today = getTodayDateString();
+      const payload = {
+        sessionId: App.sessionId || ('manual_' + Date.now()),
+        results: [{
           id: wordObj.id,
           word: wordObj.word,
           stage: wordObj.stage,
           previousStatus: oldStatus,
-          status: wordObj.status,
-          isCorrect: false, // セッションの正誤とは区別するため
-          note: "手動ステータス変更" // 記録用にメモを追加
+          status: parsedNewStatus,
+          mistakes: wordObj.mistakes || 0,
+          reviewCount: wordObj.reviewCount || 0,
+          nextReviewDate: wordObj.nextReviewDate || today,
+          lastReviewDate: today,
+          isCorrect: parsedNewStatus === 1,
+          note: "手動ステータス変更"
+        }],
+        testResults: []
+      };
+    
+      showToast('💾 ステータスを保存中...', 'info');
+    
+      try {
+        const res = await fetch(GAS_API_URL, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+          cache: 'no-store'
         });
+    
+        if (!res.ok) throw new Error(`サーバーエラー (HTTP ${res.status})`);
         
+        const text = await res.text();
+        const data = JSON.parse(text);
+    
+        if (data.error) throw new Error(data.error);
+    
         renderDashboard();
-        showToast(`✅ ステータスを更新しました`, 'success');
+        showToast('✅ ステータスを更新し、学習記録に保存しました！', 'success');
+    
+      } catch (err) {
+        console.error('Status update error:', err);
+        showToast('❌ 保存に失敗しました: ' + err.message, 'error');
       }
     }
 

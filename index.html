@@ -667,7 +667,7 @@
 
   <script>
     // 🔗 ここにご自身の GAS ウェブアプリ URL を設定してください
-    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbz9WO9B3pyUkJN2eDdlAkOgaWgGA5qSDm_Qee5EOGx6Drqm9e13YTup5vcBYK9op80BGw/exec";
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbxVhdSXY0iCNyp9J2V5B0Oh1aLUdRf_GQDVablCExHW_kK-f4uMeCn6Wdz7ubNfEp-IxA/exec";
 
     const INTERVALS = [1, 3, 7, 14, 30, 60, 90];
     // ✨ 誤答した単語を何問後に再出題するか
@@ -821,6 +821,15 @@
         updatePronunciationUI('idle');
         if (App.lastRecognizedText) {
           checkPronunciationResult(App.lastRecognizedText);
+        } else {
+          // ★ 認識結果が得られなかった場合も黙って終わらせず、次の行動を促す
+          const statusEl = document.getElementById('pronunciation-status');
+          if (statusEl) {
+            statusEl.textContent = '😶 音声が認識されませんでした。もう一度お試しください';
+            statusEl.className = 'text-center text-xs font-bold text-rose-500';
+          }
+          const retryBtn = document.getElementById('pronunciation-retry-btn');
+          if (retryBtn) retryBtn.classList.remove('hidden');
         }
       };
       
@@ -923,10 +932,27 @@
         ? App.recognizedAlternatives 
         : [recognizedText];
     
+      // ★ 認識の揺れを吸収して判定する（たまに認識されない問題の緩和）
+      //   ・句読点・引用符を除去
+      //   ・先頭の "the / a / an" を除去（"the process" → "process"）
+      //   ・末尾の s/es/ed/ing の語尾変化を許容（processes/processed/processing → process）
+      const stripInflection = (w) => w
+        .replace(/ing$/, '')
+        .replace(/ed$/, '')
+        .replace(/es$/, '')
+        .replace(/s$/, '');
+    
       let isCorrect = candidates.some(text => {
-        const cleaned = text.toLowerCase().replace(/[.,!?;:'"]/g, '').trim();
+        let cleaned = String(text || '').toLowerCase().replace(/[.,!?;:'"()]/g, '').trim();
+        cleaned = cleaned.replace(/^(the|a|an)\s+/, '').trim();
         const words = cleaned.split(/\s+/);
-        return cleaned === target || words.includes(target);
+        if (cleaned === target || words.includes(target)) return true;
+        // 語尾変化・認識ノイズへの寛容マッチ
+        return words.some(w => {
+          if (w === target) return true;
+          const stem = stripInflection(w);
+          return stem.length >= 4 && stem === stripInflection(target);
+        });
       });
       
       const judgeBox = document.getElementById('pronunciation-judge-box');
@@ -2349,6 +2375,40 @@
     
         derivedContainer.appendChild(derivedBlock);
       }
+
+      // --- 3. ⚠️ 間違いやすい単語（似ているが意味が違うペア） ---
+      if (item.confusable && item.confusable.length > 0) {
+        const confBlock = document.createElement('div');
+        confBlock.className = 'bg-rose-50/80 p-2.5 rounded-xl border border-rose-200 text-xs space-y-1 mt-2';
+        confBlock.dataset.ownerWord = item.word;
+        const confHeader = document.createElement('div');
+        confHeader.className = 'font-bold text-rose-700 text-[11px]';
+        confHeader.textContent = '⚠️ 間違いやすい単語:';
+        confBlock.appendChild(confHeader);
+
+        item.confusable.forEach(cf => {
+          const row = document.createElement('div');
+          row.className = 'text-[11px] text-rose-900 flex items-center justify-between gap-1';
+          row.title = cf.tip ? ('区別: ' + cf.tip) : '';
+          const textSpan = document.createElement('span');
+          textSpan.innerHTML = `<strong>${escapeHtml(cf.word)}</strong>: ${escapeHtml(cf.meaning)}`;
+          row.appendChild(textSpan);
+          if (cf.word) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'text-xs shrink-0 hover:scale-110 transition';
+            btn.textContent = '🔊';
+            btn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              speakText(cf.word);
+            });
+            row.appendChild(btn);
+          }
+          confBlock.appendChild(row);
+        });
+
+        derivedContainer.appendChild(confBlock);
+      }
     
       // 自動発音は逆方向モードではスキップ（音声が答えを教えてしまうため）
       if (App.tts.autoPlay && !App.reverseMode) {
@@ -2494,7 +2554,11 @@
             App.revisitQueue = App.revisitQueue.filter(x => x.wait > 0);
             // 後ろから挿入して順序を維持
             ready.reverse().forEach(x => {
-              App.queue.splice(App.index + 1, 0, x.item);
+              // ★ 同じ単語が既に後ろのキューにある場合は再挿入しない（重複コピー防止）
+              const alreadyLater = App.queue.slice(App.index + 1).some(w => w.id === x.item.id);
+              if (!alreadyLater) {
+                App.queue.splice(App.index + 1, 0, x.item);
+              }
             });
           }
 
@@ -2502,7 +2566,17 @@
             const learnedIds = new Set(
               App.results.filter(r => r.isCorrect).map(r => r.id)
             );
-            const remainingWords = App.queue.filter(w => !learnedIds.has(w.id));
+            // ★ 同じ単語の重複コピーを除いて次ラウンドのキューを作る
+            //   （以前は誤答再出題のコピーが残り、同じ単語が複数回出て
+            //     「覚えた→また出た→要復習」で覚えた数が増減していた）
+            const seenIds = new Set();
+            const remainingWords = [];
+            App.queue.forEach(w => {
+              if (learnedIds.has(w.id)) return;
+              if (seenIds.has(w.id)) return;
+              seenIds.add(w.id);
+              remainingWords.push(w);
+            });
 
             if (remainingWords.length > 0) {
               const mode = document.getElementById('mode-select').value;
@@ -3416,6 +3490,11 @@
       let summaryText = `今回は全 ${totalWords} 単語（暗記済み: ${learnedCount} / 要復習: ${wrongCount}）に取り組みました。`;
       if (totalTest > 0) {
         summaryText += ` 確認小テストの正解率は ${testRate}% でした！`;
+        // ★ 小テストで不正解の単語は要復習に戻ることを明示（覚えた数が減る仕様の説明）
+        const testWrongCount = App.testResults.filter(r => !r.isCorrect).length;
+        if (testWrongCount > 0) {
+          summaryText += ` 小テストで${testWrongCount}語を間違えたため、それらの単語は要復習に戻りました（間違えた単語は次回また出題されます）。`;
+        }
       }
       document.getElementById('result-summary').textContent = summaryText;
 

@@ -171,6 +171,24 @@
         </details>
       </div>
 
+      <!-- 🤖 AI学習アシスタント（DeepSeek APIによる毎日分析） -->
+      <div id="ai-assistant-card" class="bg-white rounded-2xl shadow-md p-5 space-y-3 border border-indigo-200 hidden">
+        <div class="flex items-center justify-between border-b pb-2">
+          <h2 class="text-base font-bold text-slate-800 flex items-center gap-1.5">
+            <span>🤖</span><span>AI学習アシスタント</span>
+          </h2>
+          <button onclick="refreshAiPlan()" class="text-[11px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-2.5 py-1 rounded-lg transition whitespace-nowrap">🔄 再生成</button>
+        </div>
+        <div id="ai-plan-loading" class="text-xs text-slate-500 py-3 text-center">🤖 学習データをAIで分析中...</div>
+        <div id="ai-plan-content" class="hidden space-y-3">
+          <div id="ai-analysis" class="text-xs text-slate-700 leading-relaxed bg-indigo-50/60 p-3 rounded-xl border border-indigo-100"></div>
+          <div id="ai-progress" class="text-xs font-bold text-emerald-700 bg-emerald-50 p-2.5 rounded-xl border border-emerald-100"></div>
+          <div id="ai-weaknesses" class="text-xs text-slate-600 space-y-1"></div>
+          <div id="ai-tomorrow" class="text-xs bg-amber-50 p-3 rounded-xl border border-amber-200 space-y-1.5"></div>
+        </div>
+        <div id="ai-plan-error" class="hidden text-xs text-rose-600 bg-rose-50 p-3 rounded-xl border border-rose-200 leading-relaxed whitespace-pre-line"></div>
+      </div>
+
       <!-- 弱点克服セクション -->
       <div id="weakness-section" class="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden">
         <details class="group">
@@ -667,7 +685,7 @@
 
   <script>
     // 🔗 ここにご自身の GAS ウェブアプリ URL を設定してください
-    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbxVhdSXY0iCNyp9J2V5B0Oh1aLUdRf_GQDVablCExHW_kK-f4uMeCn6Wdz7ubNfEp-IxA/exec";
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbxM2Y4iA8Bjq-CTfRzTSKbq-dfC_ZcgKsrW2jxMB_5D50G_kUnKVAAzwruiJs9ZzQtP3Q/exec";
 
     const INTERVALS = [1, 3, 7, 14, 30, 60, 90];
     // ✨ 誤答した単語を何問後に再出題するか
@@ -1797,6 +1815,113 @@
       document.getElementById('setup-card').classList.remove('hidden');
 
       checkResumeData();
+      loadAiPlan(); // 🤖 AI学習アシスタント（非同期・画面をブロックしない）
+    }
+
+    // ============================================
+    // 🤖 AI学習アシスタント（DeepSeek API）
+    // ============================================
+    async function loadAiPlan() {
+      const card = document.getElementById('ai-assistant-card');
+      if (card) card.classList.remove('hidden');
+      try {
+        const res = await fetch(GAS_API_URL + '?action=getAiPlan&_=' + Date.now(), { cache: 'no-store' });
+        const data = await res.json();
+        renderAiPlan(data);
+      } catch (e) {
+        showAiError('AI分析の取得に失敗しました: ' + e.message);
+      }
+    }
+
+    async function refreshAiPlan() {
+      const loading = document.getElementById('ai-plan-loading');
+      const content = document.getElementById('ai-plan-content');
+      const errEl = document.getElementById('ai-plan-error');
+      if (content) content.classList.add('hidden');
+      if (errEl) errEl.classList.add('hidden');
+      if (loading) {
+        loading.classList.remove('hidden');
+        loading.textContent = '🤖 学習データをAIで再分析中...（10〜20秒かかります）';
+      }
+      try {
+        const res = await fetch(GAS_API_URL + '?action=getAiPlan&force=1&_=' + Date.now(), { cache: 'no-store' });
+        const data = await res.json();
+        renderAiPlan(data);
+      } catch (e) {
+        showAiError('AI分析の再生成に失敗しました: ' + e.message);
+      }
+    }
+
+    function renderAiPlan(data) {
+      const loading = document.getElementById('ai-plan-loading');
+      const content = document.getElementById('ai-plan-content');
+      if (!data || data.error) {
+        showAiError(data && data.error ? data.error : 'AI分析を取得できませんでした');
+        return;
+      }
+      const a = data.analysis || {};
+      if (loading) loading.classList.add('hidden');
+      if (content) content.classList.remove('hidden');
+
+      const analysisEl = document.getElementById('ai-analysis');
+      if (analysisEl) analysisEl.textContent = '💬 ' + (a.analysis || '（分析なし）');
+
+      const progressEl = document.getElementById('ai-progress');
+      if (progressEl) progressEl.textContent = '📈 ' + (a.progress || '');
+
+      const weakEl = document.getElementById('ai-weaknesses');
+      if (weakEl) {
+        weakEl.innerHTML = '';
+        if (a.weaknesses && a.weaknesses.length) {
+          const h = document.createElement('div');
+          h.className = 'font-bold text-rose-700 text-[11px]';
+          h.textContent = '🎯 今の弱点:';
+          weakEl.appendChild(h);
+          a.weaknesses.forEach(w => {
+            const d = document.createElement('div');
+            d.textContent = '・' + w;
+            weakEl.appendChild(d);
+          });
+        }
+      }
+
+      const t = a.tomorrowPlan || {};
+      const tEl = document.getElementById('ai-tomorrow');
+      if (tEl) {
+        tEl.innerHTML = '';
+        const th = document.createElement('div');
+        th.className = 'font-bold text-amber-800 text-[11px]';
+        th.textContent = '🗓️ 明日の最適プラン（AI提案）:';
+        tEl.appendChild(th);
+        const rows = [];
+        if (t.stages && t.stages.length) rows.push('対象ステージ: ' + t.stages.join(', '));
+        rows.push('新規: ' + (t.newWordsTarget || 0) + '語 / 復習: ' + (t.reviewTarget || 0) + '語');
+        if (t.focusWords && t.focusWords.length) rows.push('重点単語: ' + t.focusWords.join(', '));
+        if (t.advice) rows.push('💡 ' + t.advice);
+        rows.forEach(r => {
+          const d = document.createElement('div');
+          d.textContent = r;
+          tEl.appendChild(d);
+        });
+        if (data.generatedAt) {
+          const g = document.createElement('div');
+          g.className = 'text-[10px] text-slate-400 text-right pt-1';
+          g.textContent = '生成: ' + data.generatedAt;
+          tEl.appendChild(g);
+        }
+      }
+    }
+
+    function showAiError(msg) {
+      const loading = document.getElementById('ai-plan-loading');
+      const content = document.getElementById('ai-plan-content');
+      if (loading) loading.classList.add('hidden');
+      if (content) content.classList.add('hidden');
+      const errEl = document.getElementById('ai-plan-error');
+      if (errEl) {
+        errEl.classList.remove('hidden');
+        errEl.textContent = '⚠️ ' + msg + '\n\n（DeepSeek APIキーの設定: GASエディタで setAiApiKey("sk-...") を一度実行してください）';
+      }
     }
 
     /**

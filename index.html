@@ -68,6 +68,10 @@
       <!-- ✨ 追加：セッション全体のカウントダウンタイマーバッジ -->
       <span id="session-timer-badge" class="text-xs bg-indigo-800 text-white px-2.5 py-1 rounded-full font-mono font-bold hidden">⏳ 00:00</span>
       <span id="progress-indicator" class="text-xs bg-indigo-800 px-2.5 py-1 rounded-full font-mono hidden">0 / 0</span>
+      <!-- ✨ 復習済み単語プルダウン（セッション中に答えた単語を一覧表示） -->
+      <select id="reviewed-words-select" onchange="onReviewedWordSelect()" class="hidden text-[11px] bg-indigo-800 text-white border border-indigo-500 rounded-lg px-2 py-1.5 font-bold max-w-[150px] outline-none cursor-pointer" title="復習済みの単語（選択で意味を表示）">
+        <option value="">📋 復習済み</option>
+      </select>
       <button id="pause-btn" onclick="pauseQuiz()" class="text-xs bg-rose-600 hover:bg-rose-700 px-2.5 py-1 rounded-lg hidden font-bold transition">
         ⏸️ 中断
       </button>
@@ -672,9 +676,32 @@
           </div>
           <p id="dict-meaning" class="text-sm font-bold text-indigo-700 bg-indigo-50/70 py-2.5 px-3 rounded-xl border border-indigo-100"></p>
         </div>
+        <button onclick="askAiAboutDictWord()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-xl text-xs transition">
+          🤖 AIに聞く（意味・例文をAIが解説）
+        </button>
         <button onclick="closeDictModal()" class="w-full bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2 rounded-xl text-xs transition">
           閉じる (Esc)
         </button>
+      </div>
+    </div>
+
+    <!-- 🤖 AIチャット（単語の質問用・DeepSeek） -->
+    <div id="ai-chat-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+      <div class="bg-white rounded-2xl shadow-2xl p-5 max-w-md w-full flex flex-col space-y-3 border border-slate-200" style="height: 72vh;">
+        <div class="flex justify-between items-center border-b pb-2">
+          <h3 class="text-base font-bold text-slate-800 flex items-center gap-1.5">
+            <span>🤖</span><span>AIに聞く（DeepSeek）</span>
+          </h3>
+          <button onclick="closeAiChat()" class="text-slate-400 hover:text-slate-600 text-lg font-bold">✕</button>
+        </div>
+        <div id="ai-chat-messages" class="flex-grow overflow-y-auto space-y-2 text-xs pr-1 flex flex-col"></div>
+        <div class="flex items-center space-x-2 border-t pt-2">
+          <input id="ai-chat-input" type="text" placeholder='例: 「familiar」の意味と使い方を教えて' 
+            class="flex-grow bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+            onkeydown="if(event.key==='Enter')sendAiChat()">
+          <button onclick="sendAiChat()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-xs transition whitespace-nowrap">送信</button>
+        </div>
+        <p class="text-[10px] text-slate-400">💡 単語の意味・例文・語源・類義語・発音などをAIに質問できます</p>
       </div>
     </div>
   </main>
@@ -685,7 +712,7 @@
 
   <script>
     // 🔗 ここにご自身の GAS ウェブアプリ URL を設定してください
-    const GAS_API_URL = "https://script.google.com/macros/s/AKfycby7ZP38Z0pVNjCB5Z78nMR8s-dplQFc428TJ5e2KSXgh5JCSoiBWnG1Gnyq6lsFADmxEA/exec";
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbwVwFMZMDyht4wVa5373fNTrUOWvfKSp-mHp40BbIeNc7p97MVtiG3rJ-6ZX5JdiGE_YQ/exec";
 
     const INTERVALS = [1, 3, 7, 14, 30, 60, 90];
     // ✨ 誤答した単語を何問後に再出題するか
@@ -1959,6 +1986,119 @@
       }
     }
 
+    // ============================================
+    // 📋 復習済み単語プルダウン（ヘッダー）
+    // ============================================
+    function updateReviewedWordsDropdown() {
+      const sel = document.getElementById('reviewed-words-select');
+      if (!sel) return;
+      const current = sel.value;
+      sel.innerHTML = '<option value="">📋 復習済み (' + App.results.length + ')</option>';
+      // 最新の結果順（後で回答した単語ほど上）
+      App.results.slice().reverse().forEach(r => {
+        const opt = document.createElement('option');
+        opt.value = r.id;
+        opt.textContent = (r.isCorrect ? '✅ ' : '❌ ') + r.word;
+        sel.appendChild(opt);
+      });
+      sel.value = current;
+    }
+
+    function onReviewedWordSelect() {
+      const sel = document.getElementById('reviewed-words-select');
+      const id = sel.value;
+      if (!id) return;
+      const w = App.allWords.find(x => String(x.id) === String(id));
+      if (w) {
+        const meanings = Array.from(new Set((w.details || []).map(d => d.meaningJa).filter(Boolean)));
+        showToast((w.word) + ': ' + (meanings.join(' / ') || '意味未登録').slice(0, 90), 'info');
+        speakText(w.word);
+      }
+    }
+
+    // ============================================
+    // 🤖 AIチャット（単語の質問用・DeepSeek）
+    // ============================================
+    let aiChatHistory = [];
+    let aiDictWord = '';
+
+    function openAiChat(question) {
+      const input = document.getElementById('ai-chat-input');
+      if (question) {
+        input.value = question;
+        input.focus();
+      }
+      document.getElementById('ai-chat-modal').classList.remove('hidden');
+      const box = document.getElementById('ai-chat-messages');
+      if (box.children.length === 0) {
+        const hello = document.createElement('div');
+        hello.className = 'self-start bg-slate-100 text-slate-600 rounded-xl rounded-bl-sm px-3 py-2 max-w-[90%] whitespace-pre-wrap';
+        hello.textContent = 'こんにちは！🤖 TOEFLの単語について何でも聞いてください。\n例: 「contrastとcontractの違い」「familiarの例文」';
+        box.appendChild(hello);
+      }
+    }
+
+    function closeAiChat() {
+      document.getElementById('ai-chat-modal').classList.add('hidden');
+    }
+
+    function appendChatMsg(role, text) {
+      const box = document.getElementById('ai-chat-messages');
+      const div = document.createElement('div');
+      div.className = role === 'user'
+        ? 'self-end bg-indigo-600 text-white rounded-xl rounded-br-sm px-3 py-2 max-w-[90%] whitespace-pre-wrap'
+        : 'self-start bg-slate-100 text-slate-800 rounded-xl rounded-bl-sm px-3 py-2 max-w-[90%] whitespace-pre-wrap';
+      div.textContent = text;
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    async function sendAiChat() {
+      const input = document.getElementById('ai-chat-input');
+      const q = input.value.trim();
+      if (!q) return;
+      input.value = '';
+      appendChatMsg('user', q);
+      aiChatHistory.push({ role: 'user', content: q });
+
+      const box = document.getElementById('ai-chat-messages');
+      const loading = document.createElement('div');
+      loading.className = 'self-start bg-slate-100 text-slate-400 rounded-xl px-3 py-2 text-xs';
+      loading.textContent = '🤖 考え中...';
+      box.appendChild(loading);
+      box.scrollTop = box.scrollHeight;
+
+      try {
+        const res = await fetch(GAS_API_URL, {
+          method: 'POST',
+          body: JSON.stringify({ chat: { question: q, history: aiChatHistory.slice(0, -1) } }),
+          cache: 'no-store'
+        });
+        const text = await res.text();
+        const data = JSON.parse(text);
+        loading.remove();
+        if (data.error) {
+          appendChatMsg('assistant', '⚠️ ' + data.error);
+        } else {
+          const reply = data.reply || '（応答がありませんでした）';
+          appendChatMsg('assistant', reply);
+          aiChatHistory.push({ role: 'assistant', content: reply });
+        }
+      } catch (e) {
+        loading.remove();
+        appendChatMsg('assistant', '⚠️ 通信エラー: ' + e.message);
+      }
+    }
+
+    /**
+     * 辞書モーダルの「AIに聞く」ボタン：現在の単語をチャットに投げる
+     */
+    function askAiAboutDictWord() {
+      const word = aiDictWord || document.getElementById('dict-word').textContent || '';
+      closeDictModal();
+      openAiChat('「' + word + '」の意味・使い方・例文を日本語で教えてください');
+    }
+
     /**
      * 今日のタスクカードの描画処理（表示保証ロジック強化）
      */
@@ -2389,6 +2529,10 @@
       document.getElementById('pause-btn').classList.remove('hidden');
       document.getElementById('progress-indicator').classList.remove('hidden');
       document.getElementById('quiz-container').classList.remove('hidden');
+      // 📋 復習済みプルダウンを表示
+      const reviewedSel = document.getElementById('reviewed-words-select');
+      if (reviewedSel) reviewedSel.classList.remove('hidden');
+      updateReviewedWordsDropdown();
     
       showCurrentCard();
     }
@@ -2702,6 +2846,8 @@
       if (indicatorEl) {
         indicatorEl.textContent = `${learnedCount} (覚えた数) / ${total}`;
       }
+      // 📋 ヘッダーの復習済みプルダウンを更新
+      updateReviewedWordsDropdown();
 
       setTimeout(() => {
         try {
@@ -3621,6 +3767,9 @@
       document.getElementById('quiz-container').classList.add('hidden');
       document.getElementById('pause-btn').classList.add('hidden');
       document.getElementById('progress-indicator').classList.add('hidden');
+      // 📋 復習済みプルダウンを非表示
+      const reviewedSelHide = document.getElementById('reviewed-words-select');
+      if (reviewedSelHide) reviewedSelHide.classList.add('hidden');
 
       // 結果の集計処理（単語の種類数ベース）
       const finalResultMap = new Map();
@@ -3967,6 +4116,10 @@
       document.getElementById('pause-btn').classList.add('hidden');
       document.getElementById('progress-indicator').classList.add('hidden');
 
+      // 📋 復習済みプルダウンを非表示
+      const reviewedSelHide2 = document.getElementById('reviewed-words-select');
+      if (reviewedSelHide2) reviewedSelHide2.classList.add('hidden');
+
       document.getElementById('loading').classList.remove('hidden');
 
       loadDataFromGAS();
@@ -4001,6 +4154,9 @@
         document.getElementById('test-container').classList.add('hidden');
         document.getElementById('pause-btn').classList.add('hidden');
         document.getElementById('progress-indicator').classList.add('hidden');
+        // 📋 復習済みプルダウンを非表示
+        const reviewedSelHide3 = document.getElementById('reviewed-words-select');
+        if (reviewedSelHide3) reviewedSelHide3.classList.add('hidden');
         
         document.getElementById('setup-card').classList.remove('hidden');
     
@@ -4063,6 +4219,10 @@
         document.getElementById('setup-card').classList.add('hidden');
         document.getElementById('pause-btn').classList.remove('hidden');
         document.getElementById('progress-indicator').classList.remove('hidden');
+        // 📋 復習済みプルダウンを表示
+        const reviewedSelResume = document.getElementById('reviewed-words-select');
+        if (reviewedSelResume) reviewedSelResume.classList.remove('hidden');
+        updateReviewedWordsDropdown();
     
         if (App.isTesting) {
           document.getElementById('test-container').classList.remove('hidden');
@@ -4736,6 +4896,7 @@
       if (wordEl) {
     
         wordEl.textContent = word || '';
+        aiDictWord = word || ''; // 🤖 「AIに聞く」ボタン用に現在の単語を記録
     
         wordEl.style.userSelect = 'text';
         wordEl.style.webkitUserSelect = 'text';

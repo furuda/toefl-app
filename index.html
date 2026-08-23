@@ -713,7 +713,7 @@
 
   <script>
     // 🔗 ここにご自身の GAS ウェブアプリ URL を設定してください
-    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbx8QzOzUWCn0t8Wwy-3jrUR212OLdMyhPK1QsTegGbbshuDTmaC07xspR-UNALIjT4lCw/exec";
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbwhtt36EUS82kfaJ3271S_J_fGOhd964OaBROP-pQjzrEUgcDDCErkHH7rBuRVkdtjAtw/exec";
 
     const INTERVALS = [1, 3, 7, 14, 30, 60, 90];
     // ✨ 誤答した単語を何問後に再出題するか
@@ -1902,10 +1902,21 @@
         analysisEl.appendChild(h);
         const t = rs.today || {};
         const tStages = t.stages ? Object.entries(t.stages).map(([k, v]) => k + ' ' + v + '語').join(' / ') : '';
+        // ★ データが全く読めていない場合の警告（スプレッドシート連携の問題を明示）
+        if ((rs.total || 0) === 0) {
+          const warn = document.createElement('div');
+          warn.className = 'text-[11px] text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2 mt-1 leading-relaxed';
+          warn.textContent = '⚠️ スプレッドシートのデータが読み込めていません。\n・GASエディタで checkSheets() を実行してシート構成を確認\n・アプリのGASが「バインドされているスプレッドシート」に最新データが反映されているか確認\n（新しいxlsxをアップロードしただけでは、GASが読むスプレッドシートは変わりません）';
+          analysisEl.appendChild(warn);
+        }
         const line1 = document.createElement('div');
-        line1.textContent = t.total > 0
-          ? '合計 ' + t.total + '語・正答率 ' + (t.rate || 0) + '%' + (tStages ? ' / ' + tStages : '')
-          : '今日の学習記録はまだありません（セッション終了後に「💾 保存」してください）';
+        if (t.total > 0) {
+          line1.textContent = '合計 ' + t.total + '語・正答率 ' + (t.rate || 0) + '%' + (tStages ? ' / ' + tStages : '') + (t.manualChanges ? '（手動変更 ' + t.manualChanges + '件）' : '');
+        } else if (t.manualChanges > 0) {
+          line1.textContent = '今日は手動でステータス変更 ' + t.manualChanges + '件（クイズ回答はまだありません）';
+        } else {
+          line1.textContent = '今日の学習記録はまだありません（セッション終了後に「💾 保存」してください）';
+        }
         analysisEl.appendChild(line1);
         const line2 = document.createElement('div');
         line2.className = 'mt-1';

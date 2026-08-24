@@ -251,6 +251,7 @@
           <div>
             <label class="block text-xs font-bold text-slate-700 mb-1">学習モード</label>
             <select id="mode-select" onchange="toggleWeakCount(); updateFilteredWordCount();" class="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-xs font-medium focus:ring-2 focus:ring-indigo-500 outline-none">
+              <option value="smart">🎯 スマート学習（最適）</option>
               <option value="review">📅 今日要復習の単語</option>
               <option value="review_only">⚠️ 要復習の単語のみ</option>
               <option value="unlearned">🆕 未学習の単語のみ</option>
@@ -258,6 +259,11 @@
               <option value="id_order">🔢 ID順番通り（登録順）</option> <!-- 👈 追加！ -->
               <option value="all">🎲 指定条件の全単語（ランダム）</option>
             </select>
+            <!-- スマート学習モードの説明 -->
+            <p id="smart-mode-note" class="hidden text-[11px] text-indigo-600 bg-indigo-50/60 rounded-lg p-2 mt-2 leading-relaxed">
+              🎯 復習（弱点優先）と新規を自動で混ぜた最適セッション。<br>
+              復習語は日本語→英語で思い出し、間違えた単語は4問後に再出題、終了時に間違えた単語だけを小テストで確認します。
+            </p>
           </div>
         </div>
 
@@ -713,11 +719,14 @@
 
   <script>
     // 🔗 ここにご自身の GAS ウェブアプリ URL を設定してください
-    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbwhtt36EUS82kfaJ3271S_J_fGOhd964OaBROP-pQjzrEUgcDDCErkHH7rBuRVkdtjAtw/exec";
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbx8QzOzUWCn0t8Wwy-3jrUR212OLdMyhPK1QsTegGbbshuDTmaC07xspR-UNALIjT4lCw/exec";
 
     const INTERVALS = [1, 3, 7, 14, 30, 60, 90];
     // ✨ 誤答した単語を何問後に再出題するか
     const RETRY_GAP = 4;
+    // 🎯 スマート学習モードの構成パラメータ
+    const SMART_REVIEW_CAP = 80; // 1セッションの復習語の上限
+    const SMART_NEW_CAP = 15;    // 1セッションの新規語の上限
     const STORAGE_KEY = 'vocab_app_paused_session_v2';
     const TTS_STORAGE_KEY = 'vocab_app_tts_settings_v2';
 
@@ -758,7 +767,11 @@
       // ✨ 改善②：誤答の即時再出題用キュー（{item, wait} の配列）
       revisitQueue: [],
       // 発音チェック後に適用する自信度（簡単/ふつう/難しい）
-      pendingConfidence: 'normal'
+      pendingConfidence: 'normal',
+      // 🎯 スマート学習モード関連
+      smartMode: false,
+      smartWeakIds: null, // セッション中に間違えた/難しいとした単語ID（終了時テスト用）
+      currentCardReverse: false // 現在表示中のカードの向き（逆方向か）
     };
 
     function escapeHtml(str) {
@@ -798,8 +811,8 @@
      */
     function answerWithConfidence(level) {
       App.pendingConfidence = level || 'normal';
-      // 逆方向モードでは発音チェックをスキップ（音声が答えを教えてしまうため）
-      if (App.tts.pronounceCheckEnabled && !App.reverseMode) {
+      // 逆方向表示の表面では発音チェックをスキップ（音声が答えを教えてしまうため）
+      if (App.tts.pronounceCheckEnabled && !App.currentCardReverse) {
         openPronunciationCheck();
       } else {
         handleAnswer(true, { confidence: App.pendingConfidence });
@@ -1186,8 +1199,8 @@
 
     function speakCurrentWord(e) {
       if (e) e.stopPropagation();
-      // 逆方向モードの表面では発音しない（音声が答えを教えてしまうため）
-      if (App.reverseMode && !App.isFlipped) return;
+      // 逆方向表示の表面では発音しない（音声が答えを教えてしまうため）
+      if (App.currentCardReverse && !App.isFlipped) return;
       const item = App.queue[App.index];
       if (item?.word) speakText(item.word);
     }
@@ -2412,6 +2425,65 @@
       } else {
         cnt.classList.add('hidden');
       }
+      // 🎯 スマート学習モードの説明文を表示
+      const note = document.getElementById('smart-mode-note');
+      if (note) {
+        if (mode === 'smart') note.classList.remove('hidden');
+        else note.classList.add('hidden');
+      }
+    }
+
+    /**
+     * 🎯 スマート学習モード: 最適なセッション構成を自動生成する
+     * 復習（due語・弱点優先）＋ 新規をインターリーブ（1:3）で混在させる
+     * 復習語は「日→英（思い出し先行）」、新規語は「英→日」で出題する
+     */
+    function buildSmartQueue() {
+      const today = getTodayDateString();
+      const imp = document.getElementById('importance-select').value;
+      // まず選択ステージ・重要性で絞る
+      const pool = App.allWords.filter(w =>
+        App.selectedStages.has(w.stage) &&
+        (imp === 'ALL' || w.importance === imp)
+      );
+      // 復習対象: 要復習ステータス or 復習日が今日以前
+      const reviewPool = pool.filter(w =>
+        (w.status === 2) || (w.nextReviewDate && w.nextReviewDate <= today)
+      );
+      const reviewIds = new Set(reviewPool.map(w => w.id));
+      // 弱点: ミス3回以上で復習対象外のもの
+      const weakPool = pool.filter(w =>
+        !reviewIds.has(w.id) && (w.mistakes || 0) >= 3
+      );
+      const weakIds = new Set(weakPool.map(w => w.id));
+      // 新規: 未学習
+      const newPool = pool.filter(w =>
+        !reviewIds.has(w.id) && !weakIds.has(w.id) && w.status === 3
+      );
+
+      // 復習+弱点: ミスが多い順・上限
+      const reviews = reviewPool.concat(weakPool)
+        .sort((a, b) => (b.mistakes || 0) - (a.mistakes || 0) || (parseInt(a.id, 10) - parseInt(b.id, 10)))
+        .slice(0, SMART_REVIEW_CAP);
+      // 新規: 1日能力の上限
+      const newWords = newPool.slice(0, SMART_NEW_CAP);
+
+      // インターリーブ: 復習3件 → 新規1件 のパターンで混在
+      const queue = [];
+      let ni = 0, ri = 0;
+      while (ni < newWords.length || ri < reviews.length) {
+        for (let k = 0; k < 3 && ri < reviews.length; k++) {
+          const w = reviews[ri++];
+          w._smartDirection = 'ja'; // 復習は日本語→英語で思い出す
+          queue.push(w);
+        }
+        if (ni < newWords.length) {
+          const w = newWords[ni++];
+          w._smartDirection = 'en'; // 新規は英語→日本語
+          queue.push(w);
+        }
+      }
+      return queue;
     }
 
     /**
@@ -2439,6 +2511,11 @@
       const endNum = parseInt(rangeEnd, 10);
       const hasStart = rangeStart !== "" && !isNaN(startNum);
       const hasEnd = rangeEnd !== "" && !isNaN(endNum);
+
+      // 🎯 スマート学習モードは専用の構成ロジックを使う
+      if (mode === 'smart') {
+        return buildSmartQueue();
+      }
     
       return App.allWords.filter(w => {
         // 1. ステージ・重要性のフィルター
@@ -2509,6 +2586,9 @@
           }
           return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
         });
+      } else if (mode === 'smart') {
+        // 🎯 スマート学習モード: 構成済みキューをそのまま使う（インターリーブ済み・再シャッフルしない）
+        App.queue = filtered;
       } else {
         // ランダムシャッフル
         App.queue = [...filtered].sort(() => Math.random() - 0.5);
@@ -2540,6 +2620,10 @@
       App.reverseMode = !!(document.getElementById('reverse-mode-chk') || {}).checked;
       // ✨ 改善②：誤答再出題キューをリセット
       App.revisitQueue = [];
+      // 🎯 スマート学習モードの状態
+      App.smartMode = (mode === 'smart');
+      App.smartWeakIds = new Set();
+      App.currentCardReverse = false;
     
       document.getElementById('setup-card').classList.add('hidden');
       document.getElementById('pause-btn').classList.remove('hidden');
@@ -2584,7 +2668,9 @@
       const backWordText = document.getElementById('card-back-word-text');
       if (backWordText) backWordText.textContent = item.word;
 
-      // ✨ 逆方向モード：表面に日本語の意味を表示し、英単語は裏面に出す
+      // ✨ 逆方向表示の判定: グローバルの逆方向モード or スマートモードの単語別向き
+      const useReverse = App.reverseMode || (App.smartMode && item._smartDirection === 'ja');
+      App.currentCardReverse = useReverse; // 発音ガード・自動発音の判定に使う
       const meaningJaSet = new Set();
       const meaningEnSet = new Set();
       (item.details || []).forEach(d => {
@@ -2595,7 +2681,7 @@
       const frontJa = document.getElementById('card-front-ja');
       const backWord = document.getElementById('card-back-word');
       const speakHint = document.getElementById('card-speak-hint');
-      if (App.reverseMode) {
+      if (useReverse) {
         if (frontEn) frontEn.classList.add('hidden');
         if (frontJa) frontJa.classList.remove('hidden');
         if (backWord) backWord.classList.remove('hidden');
@@ -2730,8 +2816,8 @@
         derivedContainer.appendChild(confBlock);
       }
     
-      // 自動発音は逆方向モードではスキップ（音声が答えを教えてしまうため）
-      if (App.tts.autoPlay && !App.reverseMode) {
+      // 自動発音は逆方向表示ではスキップ（音声が答えを教えてしまうため）
+      if (App.tts.autoPlay && !App.currentCardReverse) {
         speakText(item.word);
       }
     }
@@ -2821,8 +2907,14 @@
 
         // 覚えた単語は再出題キューから除去
         App.revisitQueue = App.revisitQueue.filter(x => x.item.id !== item.id);
+        // 🎯 スマートモード: 「難しい」と答えた単語も弱点として記録
+        if (App.smartWeakIds && extra.confidence === 'hard') {
+          App.smartWeakIds.add(item.id);
+        }
       } else {
         App.stats.wrong++;
+        // 🎯 スマートモード: 間違えた単語を弱点として記録（終了時テスト用）
+        if (App.smartWeakIds) App.smartWeakIds.add(item.id);
         const newMistakes = baseMistakes + 1;
 
         const resultData = {
@@ -2945,9 +3037,15 @@
         }
       });
     
-      App.testQueue = uniqueTestQueue;
+      // 🎯 スマート学習モード: 間違えた・「難しい」にした単語だけを小テストに出題
+      if (App.smartMode && App.smartWeakIds) {
+        App.testQueue = uniqueTestQueue.filter(x => App.smartWeakIds.has(x.id));
+      } else {
+        App.testQueue = uniqueTestQueue;
+      }
     
       if (App.testQueue.length === 0) {
+        // 🎯 スマートモードで弱点が無い場合は小テストをスキップ
         showResults();
         return;
       }
@@ -3548,8 +3646,10 @@
         App.currentTestDetail = detail;
       }
 
-      // ============ 逆方向モード（日本語の意味を見て英単語を選ぶ） ============
-      if (App.reverseMode) {
+      // ============ 逆方向（日本語の意味を見て英単語を選ぶ） ============
+      // グローバル逆方向モード or スマートモードで「日→英」向きの単語
+      const testReverse = App.reverseMode || (App.smartMode && item._smartDirection === 'ja');
+      if (testReverse) {
         const meaningJaSet = new Set();
         (item.details || []).forEach(d => {
           if (d.meaningJa && String(d.meaningJa).trim()) meaningJaSet.add(String(d.meaningJa).trim());
@@ -4158,6 +4258,8 @@
           isTesting: App.isTesting,
           reverseMode: App.reverseMode, // ✨ 改善①
           revisitQueue: App.revisitQueue, // ✨ 改善②
+          smartMode: App.smartMode, // 🎯 スマート学習モード
+          smartWeakIds: App.smartWeakIds ? Array.from(App.smartWeakIds) : [], // 🎯 Set→配列
           totalSessionSeconds: App.totalSessionSeconds, // ✨ 追加
           sessionSecondsLeft: App.sessionSecondsLeft, // ✨ 追加
           timestamp: new Date().toISOString()
@@ -4224,6 +4326,9 @@
         App.isTransitioning = false;
         App.reverseMode = !!state.reverseMode; // ✨ 改善①
         App.revisitQueue = state.revisitQueue || []; // ✨ 改善②
+        App.smartMode = !!state.smartMode; // 🎯 スマート学習モード
+        App.smartWeakIds = Array.isArray(state.smartWeakIds) ? new Set(state.smartWeakIds) : null; // 🎯
+        App.currentCardReverse = false;
         App.totalSessionSeconds = state.totalSessionSeconds || 0;
         App.sessionSecondsLeft = state.sessionSecondsLeft || 0;
         

@@ -257,6 +257,7 @@
               <option value="unlearned">🆕 未学習の単語のみ</option>
               <option value="weak">❌ 間違いの多い単語</option>
               <option value="id_order">🔢 ID順番通り（登録順）</option> <!-- 👈 追加！ -->
+              <option value="cycle">🔁 順番に循環表示（復習済み含む・無限ループ）</option>
               <option value="all">🎲 指定条件の全単語（ランダム）</option>
             </select>
             <!-- スマート学習モードの説明 -->
@@ -771,7 +772,9 @@
       // 🎯 スマート学習モード関連
       smartMode: false,
       smartWeakIds: null, // セッション中に間違えた/難しいとした単語ID（終了時テスト用）
-      currentCardReverse: false // 現在表示中のカードの向き（逆方向か）
+      currentCardReverse: false, // 現在表示中のカードの向き（逆方向か）
+      // 🔁 循環モード: 復習済みの単語も含めて全単語をリスト順に無限ループ表示する
+      cycleMode: false
     };
 
     function escapeHtml(str) {
@@ -2599,6 +2602,10 @@
           }
           return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
         });
+      } else if (mode === 'cycle') {
+        // 🔁 循環モード: 単語リストの並び順を保ったまま、
+        //   復習済み（覚えた）単語も含めて全単語を無限ループで表示する
+        App.queue = filtered;
       } else if (mode === 'smart') {
         // 🎯 スマート学習モード: 構成済みキューをそのまま使う（インターリーブ済み・再シャッフルしない）
         App.queue = filtered;
@@ -2637,6 +2644,8 @@
       App.smartMode = (mode === 'smart');
       App.smartWeakIds = new Set();
       App.currentCardReverse = false;
+      // 🔁 循環モードの状態
+      App.cycleMode = (mode === 'cycle');
     
       document.getElementById('setup-card').classList.add('hidden');
       document.getElementById('pause-btn').classList.remove('hidden');
@@ -2955,7 +2964,8 @@
         }
 
         // ✨ 誤答の即時再出題：数問後に同じ単語をもう一度出す
-        if (!App.revisitQueue.some(x => x.item.id === item.id)) {
+        // 🔁 循環モードではキューがそのまま一周して戻ってくるため再挿入はしない
+        if (!App.cycleMode && !App.revisitQueue.some(x => x.item.id === item.id)) {
           App.revisitQueue.push({ item, wait: RETRY_GAP });
         }
       }
@@ -2975,7 +2985,8 @@
           App.index++;
 
           // ✨ 誤答の即時再出題：待機カウントを減らし、0になった単語を現在位置の直後に挿入
-          if (App.index < App.queue.length) {
+          // 🔁 循環モードではリスト順を保つため再挿入しない（一周で必ず戻ってくる）
+          if (App.index < App.queue.length && !App.cycleMode) {
             App.revisitQueue.forEach(x => { x.wait--; });
             const ready = App.revisitQueue.filter(x => x.wait <= 0);
             App.revisitQueue = App.revisitQueue.filter(x => x.wait > 0);
@@ -2990,35 +3001,43 @@
           }
 
           if (App.index >= App.queue.length) {
-            const learnedIds = new Set(
-              App.results.filter(r => r.isCorrect).map(r => r.id)
-            );
-            // ★ 同じ単語の重複コピーを除いて次ラウンドのキューを作る
-            //   （以前は誤答再出題のコピーが残り、同じ単語が複数回出て
-            //     「覚えた→また出た→要復習」で覚えた数が増減していた）
-            const seenIds = new Set();
-            const remainingWords = [];
-            App.queue.forEach(w => {
-              if (learnedIds.has(w.id)) return;
-              if (seenIds.has(w.id)) return;
-              seenIds.add(w.id);
-              remainingWords.push(w);
-            });
-
-            if (remainingWords.length > 0) {
-              const mode = document.getElementById('mode-select').value;
-              if (mode !== 'id_order') {
-                remainingWords.sort(() => Math.random() - 0.5);
-              }
-
-              // ✨ 次ラウンドでは全未習得単語がキューに入るため、再出題キューは不要になる
+            // 🔁 循環モード: 復習済み（覚えた）単語も含めて全単語をキューに残したまま
+            //   先頭へ戻って無限にループする（小テストへは自動遷移しない）
+            if (App.cycleMode) {
               App.revisitQueue = [];
-              App.queue = remainingWords;
               App.index = 0;
               showCurrentCard();
             } else {
-              // すべて覚えきったら小テストへ
-              startTestSession();
+              const learnedIds = new Set(
+                App.results.filter(r => r.isCorrect).map(r => r.id)
+              );
+              // ★ 同じ単語の重複コピーを除いて次ラウンドのキューを作る
+              //   （以前は誤答再出題のコピーが残り、同じ単語が複数回出て
+              //     「覚えた→また出た→要復習」で覚えた数が増減していた）
+              const seenIds = new Set();
+              const remainingWords = [];
+              App.queue.forEach(w => {
+                if (learnedIds.has(w.id)) return;
+                if (seenIds.has(w.id)) return;
+                seenIds.add(w.id);
+                remainingWords.push(w);
+              });
+
+              if (remainingWords.length > 0) {
+                const mode = document.getElementById('mode-select').value;
+                if (mode !== 'id_order') {
+                  remainingWords.sort(() => Math.random() - 0.5);
+                }
+
+                // ✨ 次ラウンドでは全未習得単語がキューに入るため、再出題キューは不要になる
+                App.revisitQueue = [];
+                App.queue = remainingWords;
+                App.index = 0;
+                showCurrentCard();
+              } else {
+                // すべて覚えきったら小テストへ
+                startTestSession();
+              }
             }
           } else {
             showCurrentCard();
@@ -3695,7 +3714,8 @@
           if (!extra.length) break;
           distractors.push(extra[Math.floor(Math.random() * extra.length)]);
         }
-        const choices = [correctWord, ...distractors].sort(() => Math.random() - 0.5);
+        // 🔀 正解の表示位置を各問題ごとにランダム化（偏りのないFisher–Yatesシャッフル）
+        const choices = shuffleArray([correctWord, ...distractors]);
         App.currentTestCorrectAnswer = correctWord;
         renderTestChoices(choices);
         // 逆方向モードでは自動発音しない（音声が答えを教えてしまうため）
@@ -3740,7 +3760,12 @@
         choices = [correctMeaning, ...dummyChoices.slice(0, 3)];
         App.currentTestCorrectAnswer = correctMeaning;
       }
-    
+
+      // 🔀★ 正解を先頭に固定したまま描画していたバグを修正:
+      //   選択肢全体をシャッフルし、正解の表示位置（1〜4番）を各問題ごとにランダムにする
+      //   （正解判定はテキスト比較のため、並び替えても正しく認識される）
+      choices = shuffleArray(choices);
+
       renderTestChoices(choices);
 
       if (App.tts.autoPlay) {
@@ -3751,6 +3776,15 @@
     /**
      * 小テストの選択肢ボタンを描画する
      */
+    function shuffleArray(arr) {
+      const shuffled = arr.slice();
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      return shuffled;
+    }
+
     function renderTestChoices(allChoices) {
       const choicesContainer = document.getElementById('test-choices');
       choicesContainer.innerHTML = '';
@@ -4255,6 +4289,14 @@
     }
 
     function pauseQuiz() {
+      // 🔁 循環モードは「終わりのないループ」のため、中断＝終了して結果を保存する
+      if (App.cycleMode && !App.isTesting) {
+        if (confirm('循環モードを終了して、学習結果を保存しますか？')) {
+          showResults();
+        }
+        return;
+      }
+
       if (confirm('学習を中断して状態を保存しますか？')) {
         if (App.testTimer) clearInterval(App.testTimer);
         if (App.sessionTimer) clearInterval(App.sessionTimer); // ✨ 追加
@@ -4273,6 +4315,7 @@
           revisitQueue: App.revisitQueue, // ✨ 改善②
           smartMode: App.smartMode, // 🎯 スマート学習モード
           smartWeakIds: App.smartWeakIds ? Array.from(App.smartWeakIds) : [], // 🎯 Set→配列
+          cycleMode: App.cycleMode, // 🔁 循環モード
           totalSessionSeconds: App.totalSessionSeconds, // ✨ 追加
           sessionSecondsLeft: App.sessionSecondsLeft, // ✨ 追加
           timestamp: new Date().toISOString()
@@ -4342,6 +4385,7 @@
         App.smartMode = !!state.smartMode; // 🎯 スマート学習モード
         App.smartWeakIds = Array.isArray(state.smartWeakIds) ? new Set(state.smartWeakIds) : null; // 🎯
         App.currentCardReverse = false;
+        App.cycleMode = !!state.cycleMode; // 🔁 循環モード
         App.totalSessionSeconds = state.totalSessionSeconds || 0;
         App.sessionSecondsLeft = state.sessionSecondsLeft || 0;
         

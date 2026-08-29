@@ -252,12 +252,11 @@
             <label class="block text-xs font-bold text-slate-700 mb-1">学習モード</label>
             <select id="mode-select" onchange="toggleWeakCount(); updateFilteredWordCount();" class="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-xs font-medium focus:ring-2 focus:ring-indigo-500 outline-none">
               <option value="smart">🎯 スマート学習（最適）</option>
-              <option value="review">📅 今日要復習の単語</option>
-              <option value="review_only">⚠️ 要復習の単語のみ</option>
+              <option value="review">📅 今日要復習の単語（循環表示）</option>
+              <option value="review_only">⚠️ 要復習の単語のみ（循環表示）</option>
               <option value="unlearned">🆕 未学習の単語のみ</option>
               <option value="weak">❌ 間違いの多い単語</option>
               <option value="id_order">🔢 ID順番通り（登録順）</option> <!-- 👈 追加！ -->
-              <option value="cycle">🔁 順番に循環表示（復習済み含む・無限ループ）</option>
               <option value="all">🎲 指定条件の全単語（ランダム）</option>
             </select>
             <!-- スマート学習モードの説明 -->
@@ -720,7 +719,7 @@
 
   <script>
     // 🔗 ここにご自身の GAS ウェブアプリ URL を設定してください
-    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbw67q1anqWuGoMb0oNnAM9ZYj6wlvOyCDth79YqLTKYS4h6xSgFrjh1yzXKsx6Z8fjrLA/exec";
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzD_wFQSFb-i0R8UHS3RK_nyE1mf1IQtBRBxsEZm5JuKPYa3Kd4JnAnxHIc9CV2D-iPDA/exec";
 
     const INTERVALS = [1, 3, 7, 14, 30, 60, 90];
     // ✨ 誤答した単語を何問後に再出題するか
@@ -2593,7 +2592,9 @@
       const mode = document.getElementById('mode-select').value;
     
       // 選択されたモードに応じて並び替え
-      if (mode === 'id_order') {
+      // 📅 復習モード（review / review_only）は「単語リストを順番に循環表示」するため
+      //   ID順のリスト順を保つ（復習済みの単語も含めて末尾→先頭へ無限ループ）
+      if (mode === 'id_order' || mode === 'review' || mode === 'review_only') {
         App.queue = [...filtered].sort((a, b) => {
           const idA = parseFloat(a.id) || a.id;
           const idB = parseFloat(b.id) || b.id;
@@ -2602,10 +2603,6 @@
           }
           return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
         });
-      } else if (mode === 'cycle') {
-        // 🔁 循環モード: 単語リストの並び順を保ったまま、
-        //   復習済み（覚えた）単語も含めて全単語を無限ループで表示する
-        App.queue = filtered;
       } else if (mode === 'smart') {
         // 🎯 スマート学習モード: 構成済みキューをそのまま使う（インターリーブ済み・再シャッフルしない）
         App.queue = filtered;
@@ -2644,8 +2641,9 @@
       App.smartMode = (mode === 'smart');
       App.smartWeakIds = new Set();
       App.currentCardReverse = false;
-      // 🔁 循環モードの状態
-      App.cycleMode = (mode === 'cycle');
+      // 🔁 学習画面の循環モード状態:
+      //   復習モードでは「復習済み」にした単語も含めて全単語を無限ループで表示する
+      App.cycleMode = (mode === 'review' || mode === 'review_only');
     
       document.getElementById('setup-card').classList.add('hidden');
       document.getElementById('pause-btn').classList.remove('hidden');
@@ -4289,9 +4287,9 @@
     }
 
     function pauseQuiz() {
-      // 🔁 循環モードは「終わりのないループ」のため、中断＝終了して結果を保存する
+      // 🔁 復習モード（循環表示）は「終わりのないループ」のため、中断＝終了して結果を保存する
       if (App.cycleMode && !App.isTesting) {
-        if (confirm('循環モードを終了して、学習結果を保存しますか？')) {
+        if (confirm('復習モード（循環表示）を終了して、学習結果を保存しますか？')) {
           showResults();
         }
         return;

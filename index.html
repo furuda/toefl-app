@@ -68,8 +68,8 @@
       <!-- ✨ 追加：セッション全体のカウントダウンタイマーバッジ -->
       <span id="session-timer-badge" class="text-xs bg-indigo-800 text-white px-2.5 py-1 rounded-full font-mono font-bold hidden">⏳ 00:00</span>
       <span id="progress-indicator" class="text-xs bg-indigo-800 px-2.5 py-1 rounded-full font-mono hidden">0 / 0</span>
-      <!-- ✨ 復習済み単語プルダウン（セッション中に答えた単語を一覧表示） -->
-      <select id="reviewed-words-select" onchange="onReviewedWordSelect()" class="hidden text-[11px] bg-indigo-800 text-white border border-indigo-500 rounded-lg px-2 py-1.5 font-bold max-w-[150px] outline-none cursor-pointer" title="復習済みの単語（選択で意味を表示）">
+      <!-- ✨ 復習済み単語プルダウン（セッション中に答えた単語を一覧表示・選択で意味表示・↓↑キーでリスト循環） -->
+      <select id="reviewed-words-select" onchange="onReviewedWordSelect()" onkeydown="cycleReviewedWordsSelect(event)" class="hidden text-[11px] bg-indigo-800 text-white border border-indigo-500 rounded-lg px-2 py-1.5 font-bold max-w-[150px] outline-none cursor-pointer" title="復習済みの単語（選択で意味を表示・↓↑キーで循環）">
         <option value="">📋 復習済み</option>
       </select>
       <button id="pause-btn" onclick="pauseQuiz()" class="text-xs bg-rose-600 hover:bg-rose-700 px-2.5 py-1 rounded-lg hidden font-bold transition">
@@ -124,6 +124,18 @@
         </button>
       </div>
       
+      <!-- ★ サーバー修正未反映の警告（連続学習日数が「2日」のままになる原因を表示） -->
+      <div id="deploy-warning" class="hidden bg-rose-50 border-2 border-rose-300 rounded-2xl p-4 space-y-1.5">
+        <p class="text-xs font-bold text-rose-700 flex items-center gap-1.5">
+          <span>⚠️</span><span>最新版のサーバーコード（Main.gs）が反映されていません</span>
+        </p>
+        <p class="text-[11px] text-rose-600 leading-relaxed">
+          このままでは連続学習日数が正しく計算されません。GASエディタでMain.gsを貼り替え、
+          「デプロイ → 新しいバージョンとして管理 → ウェブアプリを更新」を実行してください。
+          反映後はこの警告が消え、連続学習日数が実際の日数で表示されます。
+        </p>
+      </div>
+
       <!-- 学習進捗ダッシュボード -->
       <div id="dashboard-container" class="bg-white rounded-2xl shadow-md p-5 space-y-4 border border-slate-200">
         <div class="flex items-center justify-between border-b pb-2">
@@ -252,8 +264,8 @@
             <label class="block text-xs font-bold text-slate-700 mb-1">学習モード</label>
             <select id="mode-select" onchange="toggleWeakCount(); updateFilteredWordCount();" class="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-xs font-medium focus:ring-2 focus:ring-indigo-500 outline-none">
               <option value="smart">🎯 スマート学習（最適）</option>
-              <option value="review">📅 今日要復習の単語（循環表示）</option>
-              <option value="review_only">⚠️ 要復習の単語のみ（循環表示）</option>
+              <option value="review">📅 今日要復習の単語</option>
+              <option value="review_only">⚠️ 要復習の単語のみ</option>
               <option value="unlearned">🆕 未学習の単語のみ</option>
               <option value="weak">❌ 間違いの多い単語</option>
               <option value="id_order">🔢 ID順番通り（登録順）</option> <!-- 👈 追加！ -->
@@ -711,6 +723,7 @@
         <p class="text-[10px] text-slate-400">💡 単語の意味・例文・語源・類義語・発音などをAIに質問できます</p>
       </div>
     </div>
+
   </main>
 
   <footer class="text-center py-3 text-xs text-slate-400">
@@ -719,7 +732,7 @@
 
   <script>
     // 🔗 ここにご自身の GAS ウェブアプリ URL を設定してください
-    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzD_wFQSFb-i0R8UHS3RK_nyE1mf1IQtBRBxsEZm5JuKPYa3Kd4JnAnxHIc9CV2D-iPDA/exec";
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbxsC6EuktFRw8TLghI1S40b66CySEog3KjD6l1g3-Nh5lggoRAQcCVH1DtPjY_ueGJ3Bw/exec";
 
     const INTERVALS = [1, 3, 7, 14, 30, 60, 90];
     // ✨ 誤答した単語を何問後に再出題するか
@@ -729,6 +742,8 @@
     const SMART_NEW_CAP = 15;    // 1セッションの新規語の上限
     const STORAGE_KEY = 'vocab_app_paused_session_v2';
     const TTS_STORAGE_KEY = 'vocab_app_tts_settings_v2';
+    // 🔄 復習済み単語プルダウンの自動循環間隔（ミリ秒）
+    const REVIEW_AUTO_CYCLE_MS = 4000;
 
     // アプリ状態
     const App = {
@@ -756,6 +771,10 @@
       testTimer: null,
       testSecondsLeft: 15,
       testStartTime: 0,
+      currentTestCorrectIndex: 0, // ★ 小テストの正解選択肢インデックス（シャッフル後に更新）
+      // 🔄 復習済み単語プルダウンの自動循環状態
+      reviewAutoTimer: null,
+      reviewAutoEnabled: true,
       // ✨ 追加：セッション制限時間管理用
       sessionTimer: null,
       sessionSecondsLeft: 0,
@@ -771,9 +790,7 @@
       // 🎯 スマート学習モード関連
       smartMode: false,
       smartWeakIds: null, // セッション中に間違えた/難しいとした単語ID（終了時テスト用）
-      currentCardReverse: false, // 現在表示中のカードの向き（逆方向か）
-      // 🔁 循環モード: 復習済みの単語も含めて全単語をリスト順に無限ループ表示する
-      cycleMode: false
+      currentCardReverse: false // 現在表示中のカードの向き（逆方向か）
     };
 
     function escapeHtml(str) {
@@ -784,6 +801,21 @@
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
+    }
+
+    /**
+     * Fisher-Yatesシャッフル（新しい配列を返す）
+     * ※ 小テストの選択肢・復習済み単語の循環表示で使用
+     */
+    function shuffleArray(arr) {
+      const result = (Array.isArray(arr) ? arr : []).slice();
+      for (let i = result.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = result[i];
+        result[i] = result[j];
+        result[j] = tmp;
+      }
+      return result;
     }
 
     function getTodayDateString() {
@@ -1606,6 +1638,27 @@
           // ダッシュボード統計を更新
           // ========================================================
           if (stats) {
+
+            // ★ デプロイ確認用: サーバー側のコードバージョンをコンソールに表示
+            //   （「なし」または旧バージョンの場合は、Main.gs の修正が
+            //     GASに再デプロイされていない可能性が高い）
+            console.log(
+              '📌 連続日数ロジック コードバージョン:',
+              stats.codeVersion || '（なし＝旧デプロイの可能性）'
+            );
+
+            // ★ サーバー修正が未反映なら警告バナーを表示（再デプロイが必要な理由を明示）
+            const deployWarning =
+              document.getElementById('deploy-warning');
+            if (deployWarning) {
+              if (
+                stats.codeVersion === '2026-08-30-streak-v3'
+              ) {
+                deployWarning.classList.add('hidden');
+              } else {
+                deployWarning.classList.remove('hidden');
+              }
+            }
     
             // ------------------------------------------------------
             // 数値を安全に変換
@@ -2038,9 +2091,14 @@
         sel.appendChild(opt);
       });
       sel.value = current;
+
+      // 🔄 自動循環: 学習セッション中はリスト更新のたびに自動で回す
+      if (!sel.classList.contains('hidden')) {
+        startReviewedAutoCycle();
+      }
     }
 
-    function onReviewedWordSelect() {
+    function onReviewedWordSelect(autoMode = false) {
       const sel = document.getElementById('reviewed-words-select');
       const id = sel.value;
       if (!id) return;
@@ -2048,8 +2106,91 @@
       if (w) {
         const meanings = Array.from(new Set((w.details || []).map(d => d.meaningJa).filter(Boolean)));
         showToast((w.word) + ': ' + (meanings.join(' / ') || '意味未登録').slice(0, 90), 'info');
-        speakText(w.word);
+        // 自動循環中は連続で音声が流れないよう発音をスキップする
+        if (!autoMode) speakText(w.word);
       }
+    }
+
+    /**
+     * 🔄 復習済み単語リストの循環表示イベント（パターンA: 最後→先頭に戻る）
+     *
+     * - ↓（ArrowDown）: 次の単語へ。最後の単語で押すと先頭の単語へ戻る（A→B→C→A→B→C...）
+     * - ↑（ArrowUp）: 前の単語へ。先頭の単語で押すと最後の単語へ戻る（C→B→A→C→B→A...）
+     * - selectedIndex は常に有効範囲内に補正されるため、循環しても無限ループや
+     *   範囲外アクセスは発生しない
+     * - 選択で意味を表示する既存機能（onReviewedWordSelect）はそのまま維持
+     */
+    function cycleReviewedWordsSelect(e) {
+      const sel = document.getElementById('reviewed-words-select');
+      if (!sel) return;
+      const len = sel.options.length;
+      // 0番目は「📋 復習済み」プレースホルダー。実データは1番目〜最後まで。
+      if (len <= 1) return;
+
+      if (e.key === 'ArrowDown') {
+        // 最後の単語の次は先頭の単語へ（無限循環）
+        if (sel.selectedIndex >= len - 1) {
+          e.preventDefault();
+          sel.selectedIndex = 1;
+          onReviewedWordSelect();
+        }
+      } else if (e.key === 'ArrowUp') {
+        // 先頭の単語の前は最後の単語へ（無限循環）
+        if (sel.selectedIndex <= 1) {
+          e.preventDefault();
+          sel.selectedIndex = len - 1;
+          onReviewedWordSelect();
+        }
+      }
+    }
+
+    /**
+     * 🔄 復習済み単語リストの自動循環を開始する
+     * 学習セッション中は自動で起動し、4秒ごとに次の単語へ移動して意味を表示する
+     */
+    function startReviewedAutoCycle() {
+      stopReviewedAutoCycle();
+      const sel = document.getElementById('reviewed-words-select');
+      if (!sel || sel.classList.contains('hidden')) return;
+      if (!App.reviewAutoEnabled) return;
+      if (!sel.options || sel.options.length <= 1) return; // 実データが無ければ開始しない
+      App.reviewAutoTimer = setInterval(advanceReviewedAutoCycle, REVIEW_AUTO_CYCLE_MS);
+    }
+
+    function stopReviewedAutoCycle() {
+      if (App.reviewAutoTimer) {
+        clearInterval(App.reviewAutoTimer);
+        App.reviewAutoTimer = null;
+      }
+    }
+
+    /**
+     * 自動で次の復習済み単語へ移動する（最後→先頭の無限循環・パターンA）
+     */
+    function advanceReviewedAutoCycle() {
+      const sel = document.getElementById('reviewed-words-select');
+      if (!sel || sel.classList.contains('hidden')) {
+        stopReviewedAutoCycle();
+        return;
+      }
+      const len = sel.options.length;
+      if (len <= 1) return;
+      // 最後の単語の次は先頭の単語へ（無限循環・範囲外アクセスなし）
+      sel.selectedIndex = (sel.selectedIndex >= len - 1) ? 1 : sel.selectedIndex + 1;
+      onReviewedWordSelect(true);
+    }
+
+    /**
+     * 自動循環の操作制御: プルダウンにフォーカス中は停止（手動閲覧の邪魔をしない）し、
+     * フォーカスが外れたら自動で再開する
+     */
+    function bindReviewedAutoCycleControls() {
+      const sel = document.getElementById('reviewed-words-select');
+      if (!sel || sel.dataset.reviewAutoBound) return;
+      sel.dataset.reviewAutoBound = '1';
+      sel.addEventListener('focus', stopReviewedAutoCycle);
+      sel.addEventListener('blur', startReviewedAutoCycle);
+      sel.addEventListener('change', startReviewedAutoCycle);
     }
 
     // ============================================
@@ -2592,9 +2733,7 @@
       const mode = document.getElementById('mode-select').value;
     
       // 選択されたモードに応じて並び替え
-      // 📅 復習モード（review / review_only）は「単語リストを順番に循環表示」するため
-      //   ID順のリスト順を保つ（復習済みの単語も含めて末尾→先頭へ無限ループ）
-      if (mode === 'id_order' || mode === 'review' || mode === 'review_only') {
+      if (mode === 'id_order') {
         App.queue = [...filtered].sort((a, b) => {
           const idA = parseFloat(a.id) || a.id;
           const idB = parseFloat(b.id) || b.id;
@@ -2641,9 +2780,6 @@
       App.smartMode = (mode === 'smart');
       App.smartWeakIds = new Set();
       App.currentCardReverse = false;
-      // 🔁 学習画面の循環モード状態:
-      //   復習モードでは「復習済み」にした単語も含めて全単語を無限ループで表示する
-      App.cycleMode = (mode === 'review' || mode === 'review_only');
     
       document.getElementById('setup-card').classList.add('hidden');
       document.getElementById('pause-btn').classList.remove('hidden');
@@ -2653,6 +2789,9 @@
       const reviewedSel = document.getElementById('reviewed-words-select');
       if (reviewedSel) reviewedSel.classList.remove('hidden');
       updateReviewedWordsDropdown();
+      // 🔄 自動循環をバインドして開始（フォーカス中は停止・フォーカス解除で再開）
+      bindReviewedAutoCycleControls();
+      startReviewedAutoCycle();
     
       showCurrentCard();
     }
@@ -2962,8 +3101,7 @@
         }
 
         // ✨ 誤答の即時再出題：数問後に同じ単語をもう一度出す
-        // 🔁 循環モードではキューがそのまま一周して戻ってくるため再挿入はしない
-        if (!App.cycleMode && !App.revisitQueue.some(x => x.item.id === item.id)) {
+        if (!App.revisitQueue.some(x => x.item.id === item.id)) {
           App.revisitQueue.push({ item, wait: RETRY_GAP });
         }
       }
@@ -2983,8 +3121,7 @@
           App.index++;
 
           // ✨ 誤答の即時再出題：待機カウントを減らし、0になった単語を現在位置の直後に挿入
-          // 🔁 循環モードではリスト順を保つため再挿入しない（一周で必ず戻ってくる）
-          if (App.index < App.queue.length && !App.cycleMode) {
+          if (App.index < App.queue.length) {
             App.revisitQueue.forEach(x => { x.wait--; });
             const ready = App.revisitQueue.filter(x => x.wait <= 0);
             App.revisitQueue = App.revisitQueue.filter(x => x.wait > 0);
@@ -2999,43 +3136,35 @@
           }
 
           if (App.index >= App.queue.length) {
-            // 🔁 循環モード: 復習済み（覚えた）単語も含めて全単語をキューに残したまま
-            //   先頭へ戻って無限にループする（小テストへは自動遷移しない）
-            if (App.cycleMode) {
+            const learnedIds = new Set(
+              App.results.filter(r => r.isCorrect).map(r => r.id)
+            );
+            // ★ 同じ単語の重複コピーを除いて次ラウンドのキューを作る
+            //   （以前は誤答再出題のコピーが残り、同じ単語が複数回出て
+            //     「覚えた→また出た→要復習」で覚えた数が増減していた）
+            const seenIds = new Set();
+            const remainingWords = [];
+            App.queue.forEach(w => {
+              if (learnedIds.has(w.id)) return;
+              if (seenIds.has(w.id)) return;
+              seenIds.add(w.id);
+              remainingWords.push(w);
+            });
+
+            if (remainingWords.length > 0) {
+              const mode = document.getElementById('mode-select').value;
+              if (mode !== 'id_order') {
+                remainingWords.sort(() => Math.random() - 0.5);
+              }
+
+              // ✨ 次ラウンドでは全未習得単語がキューに入るため、再出題キューは不要になる
               App.revisitQueue = [];
+              App.queue = remainingWords;
               App.index = 0;
               showCurrentCard();
             } else {
-              const learnedIds = new Set(
-                App.results.filter(r => r.isCorrect).map(r => r.id)
-              );
-              // ★ 同じ単語の重複コピーを除いて次ラウンドのキューを作る
-              //   （以前は誤答再出題のコピーが残り、同じ単語が複数回出て
-              //     「覚えた→また出た→要復習」で覚えた数が増減していた）
-              const seenIds = new Set();
-              const remainingWords = [];
-              App.queue.forEach(w => {
-                if (learnedIds.has(w.id)) return;
-                if (seenIds.has(w.id)) return;
-                seenIds.add(w.id);
-                remainingWords.push(w);
-              });
-
-              if (remainingWords.length > 0) {
-                const mode = document.getElementById('mode-select').value;
-                if (mode !== 'id_order') {
-                  remainingWords.sort(() => Math.random() - 0.5);
-                }
-
-                // ✨ 次ラウンドでは全未習得単語がキューに入るため、再出題キューは不要になる
-                App.revisitQueue = [];
-                App.queue = remainingWords;
-                App.index = 0;
-                showCurrentCard();
-              } else {
-                // すべて覚えきったら小テストへ
-                startTestSession();
-              }
+              // すべて覚えきったら小テストへ
+              startTestSession();
             }
           } else {
             showCurrentCard();
@@ -3712,9 +3841,10 @@
           if (!extra.length) break;
           distractors.push(extra[Math.floor(Math.random() * extra.length)]);
         }
-        // 🔀 正解の表示位置を各問題ごとにランダム化（偏りのないFisher–Yatesシャッフル）
+        // ★【バグ修正】Fisher-Yatesでシャッフルし、正解の位置をインデックスで記録する
         const choices = shuffleArray([correctWord, ...distractors]);
         App.currentTestCorrectAnswer = correctWord;
+        App.currentTestCorrectIndex = choices.indexOf(correctWord);
         renderTestChoices(choices);
         // 逆方向モードでは自動発音しない（音声が答えを教えてしまうため）
         return;
@@ -3758,12 +3888,12 @@
         choices = [correctMeaning, ...dummyChoices.slice(0, 3)];
         App.currentTestCorrectAnswer = correctMeaning;
       }
-
-      // 🔀★ 正解を先頭に固定したまま描画していたバグを修正:
-      //   選択肢全体をシャッフルし、正解の表示位置（1〜4番）を各問題ごとにランダムにする
-      //   （正解判定はテキスト比較のため、並び替えても正しく認識される）
+    
+      // ★【バグ修正】選択肢の表示順をシャッフルし、正解が「常に1番目」にならないようにする。
+      //   シャッフル後に正解テキストが移動した位置を currentTestCorrectIndex に記録し、
+      //   採点・正解ハイライトはこのインデックスを参照する。
       choices = shuffleArray(choices);
-
+      App.currentTestCorrectIndex = choices.indexOf(App.currentTestCorrectAnswer);
       renderTestChoices(choices);
 
       if (App.tts.autoPlay) {
@@ -3774,24 +3904,18 @@
     /**
      * 小テストの選択肢ボタンを描画する
      */
-    function shuffleArray(arr) {
-      const shuffled = arr.slice();
-      for (let i = shuffled.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-      }
-      return shuffled;
-    }
-
     function renderTestChoices(allChoices) {
       const choicesContainer = document.getElementById('test-choices');
       choicesContainer.innerHTML = '';
     
       allChoices.forEach((choiceText, idx) => {
         const btn = document.createElement('button');
+        // ★【バグ修正】正解判定は「常に1番目」ではなく、シャッフル後の正解インデックスで行う
+        const isCorrectChoice = idx === App.currentTestCorrectIndex;
         btn.className = 'test-choice-btn w-full bg-white hover:bg-indigo-50/50 border-2 border-slate-200 rounded-xl p-3.5 text-left text-xs font-semibold text-slate-800 transition flex items-center space-x-2';
         btn.dataset.choiceText = choiceText; // ★ 正解判定・ハイライト用に完全一致で比較する
-        btn.onclick = () => selectTestChoice(btn, choiceText === App.currentTestCorrectAnswer, App.currentTestCorrectAnswer);
+        btn.dataset.isCorrect = String(isCorrectChoice);
+        btn.onclick = () => selectTestChoice(btn, isCorrectChoice, App.currentTestCorrectAnswer);
         btn.innerHTML = `
           <span class="w-6 h-6 rounded-full bg-slate-100 text-slate-600 font-bold flex items-center justify-center text-xs shrink-0">${idx + 1}</span>
           <span class="flex-grow">${escapeHtml(choiceText)}</span>
@@ -3832,10 +3956,9 @@
         App.stats.testWrong++;
     
         choiceBtns.forEach(btn => {
-          // ★ data-choiceText で完全一致するボタンだけを正解としてハイライト
-          //   （以前は textContent の部分一致だったため、
-          //     選択肢テキストが別の選択肢の部分文字列になると誤ハイライトした）
-          if (btn.dataset.choiceText === correctMeaningText) {
+          // ★【バグ修正】正解ハイライトはシャッフル後の正解インデックスを基準にする
+          //   （data-choiceText の完全一致もフォールバックとして併用）
+          if (btn.dataset.isCorrect === 'true' || btn.dataset.choiceText === correctMeaningText) {
             btn.classList.remove('border-slate-200');
             btn.classList.add('border-emerald-500', 'bg-emerald-50');
           }
@@ -3931,6 +4054,8 @@
       // 📋 復習済みプルダウンを非表示
       const reviewedSelHide = document.getElementById('reviewed-words-select');
       if (reviewedSelHide) reviewedSelHide.classList.add('hidden');
+      // 🔄 自動循環を停止
+      stopReviewedAutoCycle();
 
       // 結果の集計処理（単語の種類数ベース）
       const finalResultMap = new Map();
@@ -4280,6 +4405,8 @@
       // 📋 復習済みプルダウンを非表示
       const reviewedSelHide2 = document.getElementById('reviewed-words-select');
       if (reviewedSelHide2) reviewedSelHide2.classList.add('hidden');
+      // 🔄 自動循環を停止
+      stopReviewedAutoCycle();
 
       document.getElementById('loading').classList.remove('hidden');
 
@@ -4287,14 +4414,6 @@
     }
 
     function pauseQuiz() {
-      // 🔁 復習モード（循環表示）は「終わりのないループ」のため、中断＝終了して結果を保存する
-      if (App.cycleMode && !App.isTesting) {
-        if (confirm('復習モード（循環表示）を終了して、学習結果を保存しますか？')) {
-          showResults();
-        }
-        return;
-      }
-
       if (confirm('学習を中断して状態を保存しますか？')) {
         if (App.testTimer) clearInterval(App.testTimer);
         if (App.sessionTimer) clearInterval(App.sessionTimer); // ✨ 追加
@@ -4313,7 +4432,6 @@
           revisitQueue: App.revisitQueue, // ✨ 改善②
           smartMode: App.smartMode, // 🎯 スマート学習モード
           smartWeakIds: App.smartWeakIds ? Array.from(App.smartWeakIds) : [], // 🎯 Set→配列
-          cycleMode: App.cycleMode, // 🔁 循環モード
           totalSessionSeconds: App.totalSessionSeconds, // ✨ 追加
           sessionSecondsLeft: App.sessionSecondsLeft, // ✨ 追加
           timestamp: new Date().toISOString()
@@ -4329,6 +4447,8 @@
         // 📋 復習済みプルダウンを非表示
         const reviewedSelHide3 = document.getElementById('reviewed-words-select');
         if (reviewedSelHide3) reviewedSelHide3.classList.add('hidden');
+        // 🔄 自動循環を停止
+        stopReviewedAutoCycle();
         
         document.getElementById('setup-card').classList.remove('hidden');
     
@@ -4383,7 +4503,6 @@
         App.smartMode = !!state.smartMode; // 🎯 スマート学習モード
         App.smartWeakIds = Array.isArray(state.smartWeakIds) ? new Set(state.smartWeakIds) : null; // 🎯
         App.currentCardReverse = false;
-        App.cycleMode = !!state.cycleMode; // 🔁 循環モード
         App.totalSessionSeconds = state.totalSessionSeconds || 0;
         App.sessionSecondsLeft = state.sessionSecondsLeft || 0;
         
@@ -4399,6 +4518,9 @@
         const reviewedSelResume = document.getElementById('reviewed-words-select');
         if (reviewedSelResume) reviewedSelResume.classList.remove('hidden');
         updateReviewedWordsDropdown();
+        // 🔄 自動循環をバインドして再開
+        bindReviewedAutoCycleControls();
+        startReviewedAutoCycle();
     
         if (App.isTesting) {
           document.getElementById('test-container').classList.remove('hidden');

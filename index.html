@@ -136,6 +136,18 @@
         </p>
       </div>
 
+      <!-- ★ 学習記録の不正日時行の警告（repairScheduleTimestamps() で自動修正） -->
+      <div id="timestamp-warning" class="hidden bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 space-y-1.5">
+        <p class="text-xs font-bold text-amber-800 flex items-center gap-1.5">
+          <span>🕐</span><span>学習記録に日時が不正な行があります（連続日数の計算に影響）</span>
+        </p>
+        <p class="text-[11px] text-amber-700 leading-relaxed">
+          例: 「2026/08/27 22:42:52」が、その行のセッション作成日（8/28）より前に記録されているため、
+          8/28の学習日が消え、連続学習日数が「2日」のままになっています。GASエディタで
+          <b>repairScheduleTimestamps()</b> を実行すると自動修正され、正しい日数（例: 25日）が表示されます。
+        </p>
+      </div>
+
       <!-- 学習進捗ダッシュボード -->
       <div id="dashboard-container" class="bg-white rounded-2xl shadow-md p-5 space-y-4 border border-slate-200">
         <div class="flex items-center justify-between border-b pb-2">
@@ -732,7 +744,7 @@
 
   <script>
     // 🔗 ここにご自身の GAS ウェブアプリ URL を設定してください
-    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbxsC6EuktFRw8TLghI1S40b66CySEog3KjD6l1g3-Nh5lggoRAQcCVH1DtPjY_ueGJ3Bw/exec";
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbw67q1anqWuGoMb0oNnAM9ZYj6wlvOyCDth79YqLTKYS4h6xSgFrjh1yzXKsx6Z8fjrLA/exec";
 
     const INTERVALS = [1, 3, 7, 14, 30, 60, 90];
     // ✨ 誤答した単語を何問後に再出題するか
@@ -1652,11 +1664,24 @@
               document.getElementById('deploy-warning');
             if (deployWarning) {
               if (
-                stats.codeVersion === '2026-08-30-streak-v3'
+                stats.codeVersion === '2026-08-30-streak-v4'
               ) {
                 deployWarning.classList.add('hidden');
               } else {
                 deployWarning.classList.remove('hidden');
+              }
+            }
+
+            // ★ 学習記録に不正な日時行がある場合は修復を促す警告を表示
+            const timestampWarning =
+              document.getElementById('timestamp-warning');
+            if (timestampWarning) {
+              if (
+                Number(stats.anomalousTimestampRows) > 0
+              ) {
+                timestampWarning.classList.remove('hidden');
+              } else {
+                timestampWarning.classList.add('hidden');
               }
             }
     

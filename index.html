@@ -125,7 +125,7 @@
       </div>
       
       <!-- ★ サーバー修正未反映の警告（連続学習日数が「2日」のままになる原因を表示） -->
-      <div id="deploy-warning" class="hidden bg-rose-50 border-2 border-rose-300 rounded-2xl p-4 space-y-1.5">
+      <!-- <div id="deploy-warning" class="hidden bg-rose-50 border-2 border-rose-300 rounded-2xl p-4 space-y-1.5">
         <p class="text-xs font-bold text-rose-700 flex items-center gap-1.5">
           <span>⚠️</span><span>最新版のサーバーコード（Main.gs）が反映されていません</span>
         </p>
@@ -134,10 +134,10 @@
           「デプロイ → 新しいバージョンとして管理 → ウェブアプリを更新」を実行してください。
           反映後はこの警告が消え、連続学習日数が実際の日数で表示されます。
         </p>
-      </div>
+      </div> -->
 
       <!-- ★ 学習記録の不正日時行の警告（repairScheduleTimestamps() で自動修正） -->
-      <div id="timestamp-warning" class="hidden bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 space-y-1.5">
+      <!-- <div id="timestamp-warning" class="hidden bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 space-y-1.5">
         <p class="text-xs font-bold text-amber-800 flex items-center gap-1.5">
           <span>🕐</span><span>学習記録に日時が不正な行があります（連続日数の計算に影響）</span>
         </p>
@@ -146,7 +146,7 @@
           8/28の学習日が消え、連続学習日数が「2日」のままになっています。GASエディタで
           <b>repairScheduleTimestamps()</b> を実行すると自動修正され、正しい日数（例: 25日）が表示されます。
         </p>
-      </div>
+      </div> -->
 
       <!-- 学習進捗ダッシュボード -->
       <div id="dashboard-container" class="bg-white rounded-2xl shadow-md p-5 space-y-4 border border-slate-200">
@@ -1659,31 +1659,31 @@
               stats.codeVersion || '（なし＝旧デプロイの可能性）'
             );
 
-            // ★ サーバー修正が未反映なら警告バナーを表示（再デプロイが必要な理由を明示）
-            const deployWarning =
-              document.getElementById('deploy-warning');
-            if (deployWarning) {
-              if (
-                stats.codeVersion === '2026-08-30-streak-v4'
-              ) {
-                deployWarning.classList.add('hidden');
-              } else {
-                deployWarning.classList.remove('hidden');
-              }
-            }
+            // // ★ サーバー修正が未反映なら警告バナーを表示（再デプロイが必要な理由を明示）
+            // const deployWarning =
+            //   document.getElementById('deploy-warning');
+            // if (deployWarning) {
+            //   if (
+            //     stats.codeVersion === '2026-08-30-streak-v4'
+            //   ) {
+            //     deployWarning.classList.add('hidden');
+            //   } else {
+            //     deployWarning.classList.remove('hidden');
+            //   }
+            // }
 
-            // ★ 学習記録に不正な日時行がある場合は修復を促す警告を表示
-            const timestampWarning =
-              document.getElementById('timestamp-warning');
-            if (timestampWarning) {
-              if (
-                Number(stats.anomalousTimestampRows) > 0
-              ) {
-                timestampWarning.classList.remove('hidden');
-              } else {
-                timestampWarning.classList.add('hidden');
-              }
-            }
+            // // ★ 学習記録に不正な日時行がある場合は修復を促す警告を表示
+            // const timestampWarning =
+            //   document.getElementById('timestamp-warning');
+            // if (timestampWarning) {
+            //   if (
+            //     Number(stats.anomalousTimestampRows) > 0
+            //   ) {
+            //     timestampWarning.classList.remove('hidden');
+            //   } else {
+            //     timestampWarning.classList.add('hidden');
+            //   }
+            // }
     
             // ------------------------------------------------------
             // 数値を安全に変換

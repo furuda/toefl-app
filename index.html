@@ -72,6 +72,10 @@
       <select id="reviewed-words-select" onchange="onReviewedWordSelect()" onkeydown="cycleReviewedWordsSelect(event)" class="hidden text-[11px] bg-indigo-800 text-white border border-indigo-500 rounded-lg px-2 py-1.5 font-bold max-w-[150px] outline-none cursor-pointer" title="復習済みの単語（選択で意味を表示・↓↑キーで循環）">
         <option value="">📋 復習済み</option>
       </select>
+      <!-- ✨ 復習済み単語の記憶曲線循環（手動開始/終了） -->
+      <button id="review-cycle-toggle-btn" onclick="toggleReviewCycle()" class="hidden text-[11px] bg-amber-500 hover:bg-amber-400 text-white px-2.5 py-1.5 rounded-lg font-bold transition cursor-pointer whitespace-nowrap" title="復習済みの単語を記憶曲線に沿って自動表示（開始/終了）">
+        🔁 復習循環
+      </button>
       <button id="pause-btn" onclick="pauseQuiz()" class="text-xs bg-rose-600 hover:bg-rose-700 px-2.5 py-1 rounded-lg hidden font-bold transition">
         ⏸️ 中断
       </button>
@@ -101,6 +105,25 @@
         <button onclick="resumeQuiz()" class="bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-xl text-xs shadow transition">
           続きから再開する 🚀
         </button>
+      </div>
+    </div>
+
+    <!-- ✨ 復習済み単語 記憶曲線循環 表示バナー（画面上部） -->
+    <div id="review-cycle-banner" class="hidden mb-3 bg-gradient-to-r from-amber-400 to-orange-400 text-white rounded-2xl shadow-lg p-4 space-y-1.5 border border-amber-300">
+      <div class="flex items-center justify-between">
+        <span class="text-[11px] font-bold flex items-center gap-1">
+          <span>🔁</span><span>復習循環（記憶曲線・復習済みの単語のみ）</span>
+        </span>
+        <button onclick="stopReviewCycle()" class="text-[11px] bg-white/20 hover:bg-white/30 px-2.5 py-1 rounded-lg font-bold transition">
+          ⏹ 終了
+        </button>
+      </div>
+      <div class="flex items-end justify-between gap-3">
+        <div class="min-w-0">
+          <div id="review-cycle-banner-word" class="text-xl font-extrabold tracking-wide truncate">ー</div>
+          <div id="review-cycle-banner-meaning" class="text-xs font-semibold text-amber-50 leading-relaxed truncate">ー</div>
+        </div>
+        <span id="review-cycle-banner-meta" class="text-[10px] font-mono font-bold bg-white/20 rounded-lg px-2 py-1 whitespace-nowrap">0 / 0</span>
       </div>
     </div>
 
@@ -744,7 +767,7 @@
 
   <script>
     // 🔗 ここにご自身の GAS ウェブアプリ URL を設定してください
-    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbxjtgL81d0S9Ycmzog2f-Vn58tOfMN2qrRlk9WUfDGx0jqWZ3QMeXhs1UwKO23BJKrKOg/exec";
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbwBDa-HIe8j5f0uJjgqVMJAbYOGjyl2dLDG6XFEBEv-RA1tS55Mjw-a6yBXE2X8DWM8fA/exec";
 
     const INTERVALS = [1, 3, 7, 14, 30, 60, 90];
     // ✨ 誤答した単語を何問後に再出題するか
@@ -754,8 +777,9 @@
     const SMART_NEW_CAP = 15;    // 1セッションの新規語の上限
     const STORAGE_KEY = 'vocab_app_paused_session_v2';
     const TTS_STORAGE_KEY = 'vocab_app_tts_settings_v2';
-    // 🔄 復習済み単語プルダウンの自動循環間隔（ミリ秒）
-    const REVIEW_AUTO_CYCLE_MS = 4000;
+    // 🔄 復習済み単語の記憶曲線循環
+    const REVIEW_CYCLE_MS = 4000;      // 1単語あたりの表示間隔（ミリ秒）
+    const MEMORY_CURVE_MAX_COPIES = 5; // 1周あたりの最大表示回数（最古=5回 / 最新=1回）
 
     // アプリ状態
     const App = {
@@ -784,9 +808,13 @@
       testSecondsLeft: 15,
       testStartTime: 0,
       currentTestCorrectIndex: 0, // ★ 小テストの正解選択肢インデックス（シャッフル後に更新）
-      // 🔄 復習済み単語プルダウンの自動循環状態
+      // 🔄 復習済み単語の記憶曲線循環状態
       reviewAutoTimer: null,
-      reviewAutoEnabled: true,
+      reviewCycleWords: [],   // 復習済み単語（学習順 古い→新しい）
+      reviewCycleQueue: [],   // 表示待ちキュー（記憶曲線ラップ）
+      reviewCycleShown: 0,    // 今回の循環で表示した延べ件数
+      reviewCycleLap: 1,      // 現在の周回数
+      reviewCycleLastWord: null, // 直前に表示した単語（ラップ境界の連続防止）
       // ✨ 追加：セッション制限時間管理用
       sessionTimer: null,
       sessionSecondsLeft: 0,
@@ -2116,11 +2144,6 @@
         sel.appendChild(opt);
       });
       sel.value = current;
-
-      // 🔄 自動循環: 学習セッション中はリスト更新のたびに自動で回す
-      if (!sel.classList.contains('hidden')) {
-        startReviewedAutoCycle();
-      }
     }
 
     function onReviewedWordSelect(autoMode = false) {
@@ -2169,17 +2192,67 @@
       }
     }
 
+    // ============================================
+    // 🔁 復習済み単語の記憶曲線循環（手動開始/終了・画面上部に表示）
+    // ============================================
+
     /**
-     * 🔄 復習済み単語リストの自動循環を開始する
-     * 学習セッション中は自動で起動し、4秒ごとに次の単語へ移動して意味を表示する
+     * 手動で循環を開始/終了する（ヘッダーの「🔁 復習循環」ボタン）
      */
-    function startReviewedAutoCycle() {
+    function toggleReviewCycle() {
+      if (App.reviewAutoTimer) {
+        stopReviewCycle();
+      } else {
+        startReviewCycle();
+      }
+    }
+
+    /**
+     * 記憶曲線に沿った循環を開始する（手動操作）
+     */
+    function startReviewCycle() {
+      // 小テスト中は開始しない（小テストに入った時点で自動停止もする）
+      const testContainer = document.getElementById('test-container');
+      if (App.isTesting || (testContainer && !testContainer.classList.contains('hidden'))) {
+        showToast('⚠️ 小テスト中は復習循環を停止しています', 'error');
+        return;
+      }
+
+      const words = buildMemoryCurveWords_();
+      if (words.length === 0) {
+        showToast('復習済み（正解）の単語がまだありません', 'info');
+        return;
+      }
+
+      App.reviewCycleWords = words;
+      App.reviewCycleQueue = [];
+      App.reviewCycleShown = 0;
+      App.reviewCycleLap = 1;
+      App.reviewCycleLastWord = null;
+      // 最初の1周分（記憶曲線ラップ）を生成
+      App.reviewCycleQueue.push(...buildMemoryCurveLap_(words, null));
+
+      // 画面上部のバナーを表示
+      const banner = document.getElementById('review-cycle-banner');
+      if (banner) banner.classList.remove('hidden');
+      updateReviewCycleToggleBtn(true);
+
+      stopReviewedAutoCycle(); // 念のため旧タイマーを解除
+      advanceReviewCycle();    // すぐ1語目を表示
+      App.reviewAutoTimer = setInterval(advanceReviewCycle, REVIEW_CYCLE_MS);
+    }
+
+    /**
+     * 循環を終了する（手動の「⏹ 終了」/ セッション終了 / 小テスト開始時）
+     */
+    function stopReviewCycle() {
       stopReviewedAutoCycle();
-      const sel = document.getElementById('reviewed-words-select');
-      if (!sel || sel.classList.contains('hidden')) return;
-      if (!App.reviewAutoEnabled) return;
-      if (!sel.options || sel.options.length <= 1) return; // 実データが無ければ開始しない
-      App.reviewAutoTimer = setInterval(advanceReviewedAutoCycle, REVIEW_AUTO_CYCLE_MS);
+      App.reviewCycleQueue = [];
+      App.reviewCycleWords = [];
+      App.reviewCycleLastWord = null;
+      const banner = document.getElementById('review-cycle-banner');
+      if (banner) banner.classList.add('hidden');
+      updateReviewCycleToggleBtn(false);
     }
 
     function stopReviewedAutoCycle() {
@@ -2190,32 +2263,137 @@
     }
 
     /**
-     * 自動で次の復習済み単語へ移動する（最後→先頭の無限循環・パターンA）
+     * 復習済み（このセッションで正解＝status 1 / isCorrect）の単語だけを、
+     * 「覚えた順（古い→新しい）」で集める。❌ 要復習は循環対象にしない。
      */
-    function advanceReviewedAutoCycle() {
-      const sel = document.getElementById('reviewed-words-select');
-      if (!sel || sel.classList.contains('hidden')) {
-        stopReviewedAutoCycle();
-        return;
-      }
-      const len = sel.options.length;
-      if (len <= 1) return;
-      // 最後の単語の次は先頭の単語へ（無限循環・範囲外アクセスなし）
-      sel.selectedIndex = (sel.selectedIndex >= len - 1) ? 1 : sel.selectedIndex + 1;
-      onReviewedWordSelect(true);
+    function buildMemoryCurveWords_() {
+      const seen = new Set();
+      const orderIds = [];
+      App.results.forEach(r => {
+        if (!r.isCorrect) return; // 🔒 復習済み（正解）のみ
+        const key = String(r.id);
+        if (!seen.has(key)) {
+          seen.add(key);
+          orderIds.push(key);
+        }
+      });
+      return orderIds
+        .map(id => App.allWords.find(x => String(x.id) === id))
+        .filter(Boolean);
     }
 
     /**
-     * 自動循環の操作制御: プルダウンにフォーカス中は停止（手動閲覧の邪魔をしない）し、
-     * フォーカスが外れたら自動で再開する
+     * 記憶曲線ラップを1周分生成する（解決案: 忘却曲線に合わせた重み付き反復）
+     *
+     * 考え方:
+     * - 最初に覚えた単語ほど忘れやすい → 1周の中での表示回数を多くする
+     * - 直前に覚えた単語ほど記憶が新しい → 表示回数を少なくする
+     * - 表示回数: 最古 = MEMORY_CURVE_MAX_COPIES(5)回 / 最新 = 1回（線形補間）
+     * - 例: 100語学習した場合、最初の頃に覚えた単語は毎周5回、
+     *   最後に覚えた単語は1回だけ登場する → 古い単語ほど頻繁に復習される
+     * - ラップ内で同じ単語が連続しないよう、残数が多い単語から順に並べる
      */
-    function bindReviewedAutoCycleControls() {
-      const sel = document.getElementById('reviewed-words-select');
-      if (!sel || sel.dataset.reviewAutoBound) return;
-      sel.dataset.reviewAutoBound = '1';
-      sel.addEventListener('focus', stopReviewedAutoCycle);
-      sel.addEventListener('blur', startReviewedAutoCycle);
-      sel.addEventListener('change', startReviewedAutoCycle);
+    function buildMemoryCurveLap_(words, prevLastId) {
+      const n = words.length;
+      const remaining = words.map((w, i) => ({
+        id: String(w.id),
+        item: w,
+        copies: n <= 1 ? 1 : Math.max(1, Math.round(
+          MEMORY_CURVE_MAX_COPIES - (MEMORY_CURVE_MAX_COPIES - 1) * i / (n - 1)
+        ))
+      }));
+
+      const pool = [];
+      let prevId = prevLastId ? String(prevLastId) : null;
+      while (remaining.some(x => x.copies > 0)) {
+        const maxCopies = Math.max(...remaining.map(x => x.copies));
+        // ① 残数が最大のグループから、直前と同じ単語を避けて選ぶ
+        let candidates = remaining.filter(x => x.copies === maxCopies && String(x.id) !== prevId);
+        if (candidates.length === 0) {
+          // ② それでも無ければ、直前と異なる単語から選ぶ
+          candidates = remaining.filter(x => x.copies > 0 && String(x.id) !== prevId);
+        }
+        if (candidates.length === 0) {
+          // ③ 完全に回避できない場合のみ直前と同じ単語を許容（最後の数語など）
+          candidates = remaining.filter(x => x.copies > 0);
+        }
+        const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+        pool.push(chosen.item);
+        prevId = chosen.id;
+        chosen.copies--;
+      }
+      return pool;
+    }
+
+    /**
+     * 次の単語を1つ表示する（キューが尽きたら次のラップを生成して無限に継続）
+     */
+    function advanceReviewCycle() {
+      // 学習画面が終了していたら自動停止（タイマー放置の防止）
+      const quizContainer = document.getElementById('quiz-container');
+      const testContainer = document.getElementById('test-container');
+      if (quizContainer && quizContainer.classList.contains('hidden') &&
+          testContainer && testContainer.classList.contains('hidden')) {
+        stopReviewCycle();
+        return;
+      }
+      // 小テスト中は停止（要件: 小テストの際は循環しない）
+      if (App.isTesting || (testContainer && !testContainer.classList.contains('hidden'))) {
+        stopReviewCycle();
+        return;
+      }
+
+      if (App.reviewCycleQueue.length === 0) {
+        App.reviewCycleLap++;
+        App.reviewCycleQueue.push(
+          ...buildMemoryCurveLap_(
+            App.reviewCycleWords,
+            App.reviewCycleLastWord ? App.reviewCycleLastWord.id : null
+          )
+        );
+      }
+
+      const w = App.reviewCycleQueue.shift();
+      if (!w) {
+        stopReviewCycle();
+        return;
+      }
+      App.reviewCycleLastWord = w;
+      App.reviewCycleShown++;
+      displayReviewCycleTop(w);
+    }
+
+    /**
+     * 画面上部のバナーに現在の単語と意味を表示する
+     */
+    function displayReviewCycleTop(w) {
+      const wordEl = document.getElementById('review-cycle-banner-word');
+      const meaningEl = document.getElementById('review-cycle-banner-meaning');
+      const metaEl = document.getElementById('review-cycle-banner-meta');
+      if (wordEl) wordEl.textContent = (w && w.word) || 'ー';
+      if (meaningEl) {
+        const meanings = Array.from(new Set((w.details || []).map(d => d.meaningJa).filter(Boolean)));
+        meaningEl.textContent = meanings.join(' / ') || '意味未登録';
+        meaningEl.title = meaningEl.textContent;
+      }
+      if (metaEl) {
+        metaEl.textContent = App.reviewCycleShown + ' 語目 ｜ 対象 ' + App.reviewCycleWords.length + ' 語（' + App.reviewCycleLap + ' 周目）';
+      }
+    }
+
+    /**
+     * ヘッダー開始/終了ボタンの表示を更新する
+     */
+    function updateReviewCycleToggleBtn(running) {
+      const btn = document.getElementById('review-cycle-toggle-btn');
+      if (!btn) return;
+      if (running) {
+        btn.textContent = '⏹ 停止';
+        btn.title = '復習循環を終了';
+      } else {
+        btn.textContent = '🔁 復習循環';
+        btn.title = '復習済みの単語を記憶曲線に沿って自動表示（開始/終了）';
+      }
     }
 
     // ============================================
@@ -2813,10 +2991,10 @@
       // 📋 復習済みプルダウンを表示
       const reviewedSel = document.getElementById('reviewed-words-select');
       if (reviewedSel) reviewedSel.classList.remove('hidden');
+      // 🔁 復習循環（手動開始）ボタンを表示
+      const reviewCycleToggle = document.getElementById('review-cycle-toggle-btn');
+      if (reviewCycleToggle) reviewCycleToggle.classList.remove('hidden');
       updateReviewedWordsDropdown();
-      // 🔄 自動循環をバインドして開始（フォーカス中は停止・フォーカス解除で再開）
-      bindReviewedAutoCycleControls();
-      startReviewedAutoCycle();
     
       showCurrentCard();
     }
@@ -3202,6 +3380,10 @@
 
     function startTestSession() {
       document.getElementById('quiz-container').classList.add('hidden');
+      // 🔄 小テスト開始時は復習循環を停止する（要件5）
+      stopReviewCycle();
+      const reviewCycleToggleTest = document.getElementById('review-cycle-toggle-btn');
+      if (reviewCycleToggleTest) reviewCycleToggleTest.classList.add('hidden');
       
       // ★【確定処理】カード学習完了時の最終カウントでヘッダーを確実に「5 (覚えた数) / 5」に更新
       const total = App.roundBoundaryIndex || (App.results ? App.results.length : 0);
@@ -4079,8 +4261,10 @@
       // 📋 復習済みプルダウンを非表示
       const reviewedSelHide = document.getElementById('reviewed-words-select');
       if (reviewedSelHide) reviewedSelHide.classList.add('hidden');
-      // 🔄 自動循環を停止
-      stopReviewedAutoCycle();
+      // 🔁 復習循環ボタンを非表示・循環を停止
+      const reviewCycleToggleHide = document.getElementById('review-cycle-toggle-btn');
+      if (reviewCycleToggleHide) reviewCycleToggleHide.classList.add('hidden');
+      stopReviewCycle();
 
       // 結果の集計処理（単語の種類数ベース）
       const finalResultMap = new Map();
@@ -4430,8 +4614,10 @@
       // 📋 復習済みプルダウンを非表示
       const reviewedSelHide2 = document.getElementById('reviewed-words-select');
       if (reviewedSelHide2) reviewedSelHide2.classList.add('hidden');
-      // 🔄 自動循環を停止
-      stopReviewedAutoCycle();
+      // 🔁 復習循環ボタンを非表示・循環を停止
+      const reviewCycleToggleHide2 = document.getElementById('review-cycle-toggle-btn');
+      if (reviewCycleToggleHide2) reviewCycleToggleHide2.classList.add('hidden');
+      stopReviewCycle();
 
       document.getElementById('loading').classList.remove('hidden');
 
@@ -4472,8 +4658,10 @@
         // 📋 復習済みプルダウンを非表示
         const reviewedSelHide3 = document.getElementById('reviewed-words-select');
         if (reviewedSelHide3) reviewedSelHide3.classList.add('hidden');
-        // 🔄 自動循環を停止
-        stopReviewedAutoCycle();
+        // 🔁 復習循環ボタンを非表示・循環を停止
+        const reviewCycleToggleHide3 = document.getElementById('review-cycle-toggle-btn');
+        if (reviewCycleToggleHide3) reviewCycleToggleHide3.classList.add('hidden');
+        stopReviewCycle();
         
         document.getElementById('setup-card').classList.remove('hidden');
     
@@ -4542,10 +4730,15 @@
         // 📋 復習済みプルダウンを表示
         const reviewedSelResume = document.getElementById('reviewed-words-select');
         if (reviewedSelResume) reviewedSelResume.classList.remove('hidden');
+        // 🔁 復習循環（手動開始）ボタンは小テスト中は非表示のまま
+        const reviewCycleToggleResume = document.getElementById('review-cycle-toggle-btn');
+        if (App.isTesting) {
+          stopReviewCycle();
+          if (reviewCycleToggleResume) reviewCycleToggleResume.classList.add('hidden');
+        } else {
+          if (reviewCycleToggleResume) reviewCycleToggleResume.classList.remove('hidden');
+        }
         updateReviewedWordsDropdown();
-        // 🔄 自動循環をバインドして再開
-        bindReviewedAutoCycleControls();
-        startReviewedAutoCycle();
     
         if (App.isTesting) {
           document.getElementById('test-container').classList.remove('hidden');

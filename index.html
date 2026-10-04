@@ -76,6 +76,10 @@
       <button id="review-cycle-toggle-btn" onclick="toggleReviewCycle()" class="hidden text-[11px] bg-amber-500 hover:bg-amber-400 text-white px-2.5 py-1.5 rounded-lg font-bold transition cursor-pointer whitespace-nowrap" title="復習済みの単語を記憶曲線に沿って自動表示（開始/終了）">
         🔁 復習循環
       </button>
+      <!-- ✨ 学習した単語を使ったTOEFL iBT形式の例文作成 -->
+      <button id="essay-btn" onclick="openEssayModal()" class="hidden text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1.5 rounded-lg font-bold transition cursor-pointer whitespace-nowrap" title="学習した単語をすべて使ったTOEFL iBT形式の英文を作成">
+        📝 例文作成
+      </button>
       <button id="pause-btn" onclick="pauseQuiz()" class="text-xs bg-rose-600 hover:bg-rose-700 px-2.5 py-1 rounded-lg hidden font-bold transition">
         ⏸️ 中断
       </button>
@@ -124,6 +128,80 @@
           <div id="review-cycle-banner-meaning" class="text-xs font-semibold text-amber-50 leading-relaxed truncate">ー</div>
         </div>
         <span id="review-cycle-banner-meta" class="text-[10px] font-mono font-bold bg-white/20 rounded-lg px-2 py-1 whitespace-nowrap">0 / 0</span>
+      </div>
+    </div>
+
+    <!-- ✨ 例文作成の判断待ち（テスト開始を保留中）バー -->
+    <div id="essay-pending-bar" class="hidden mb-3 bg-emerald-50 border-2 border-emerald-300 rounded-2xl p-3 flex items-center justify-between gap-2">
+      <span class="text-[11px] font-bold text-emerald-800 leading-relaxed">
+        📝 例文作成は<strong>保留中</strong>です（確認小テスト開始前）
+      </span>
+      <div class="flex items-center gap-2 whitespace-nowrap">
+        <button onclick="openEssayModal()" class="text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-2.5 py-1.5 rounded-lg transition">例文を作成</button>
+        <button onclick="essayProceedToTest()" class="text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2.5 py-1.5 rounded-lg transition">✅ テストへ進む</button>
+      </div>
+    </div>
+
+    <!-- ✨ TOEFL iBT形式の例文モーダル（学習した単語を使用） -->
+    <div id="essay-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden overflow-y-auto p-3">
+      <div class="bg-white rounded-2xl shadow-2xl p-5 max-w-2xl w-full space-y-3 border border-slate-200 mx-auto my-6">
+        <div class="flex items-center justify-between border-b pb-2">
+          <h3 class="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+            <span>📝</span><span>TOEFL iBT形式の例文（学習した単語を使用）</span>
+          </h3>
+          <button onclick="closeEssayModal()" class="text-slate-400 hover:text-slate-600 text-lg font-bold">✕</button>
+        </div>
+        <div class="flex items-center justify-between gap-2 text-[11px]">
+          <span id="essay-word-count" class="text-slate-500 font-bold">対象: 0 語</span>
+          <div class="flex items-center gap-2">
+            <button id="essay-regen-btn" onclick="generateEssays(true)" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg transition">🔄 再生成</button>
+            <button onclick="closeEssayModal()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-3 py-1.5 rounded-lg transition">閉じる</button>
+          </div>
+        </div>
+        <p class="text-[11px] text-slate-400 leading-relaxed">
+          このセッションで学習した単語をすべて使ったTOEFL iBT形式のアカデミック英文を作成します（1つの文章につき最大15語。それ以上は複数の文章に自動分割します）。
+        </p>
+        <div id="essay-loading" class="hidden text-center text-xs text-slate-500 py-6">
+          🤖 TOEFL iBT形式の例文を作成中です…（単語数が多いと1〜2分かかることがあります）
+        </div>
+        <div id="essay-error" class="hidden text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-xl p-3 leading-relaxed"></div>
+        <div id="essay-content" class="space-y-4"></div>
+        <!-- 保留中（テスト開始前）のみ表示: 例文を確認したらテストへ進む -->
+        <button id="essay-proceed-btn" onclick="essayProceedToTest()" class="hidden w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl text-xs transition">
+          ✅ 例文を確認したので確認小テストへ進む
+        </button>
+      </div>
+    </div>
+
+    <!-- ✨ 確認小テスト前の選択モーダル（例文作成を使うか自分で決める） -->
+    <div id="essay-gate-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden overflow-y-auto p-3">
+      <div class="bg-white rounded-2xl shadow-2xl p-5 max-w-md w-full space-y-3 border border-slate-200 mx-auto my-6">
+        <div class="flex items-center justify-between border-b pb-2">
+          <h3 class="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+            <span>📝</span><span>確認小テストの前に</span>
+          </h3>
+          <button onclick="essayGateHold()" class="text-slate-400 hover:text-slate-600 text-lg font-bold">✕</button>
+        </div>
+        <p class="text-xs text-slate-600 leading-relaxed">
+          このセッションで学習した <span id="essay-gate-count" class="font-bold text-indigo-600">0</span> 語を使って、
+          TOEFL iBT形式の例文を作成できます。<br>
+          例文を作成してからテストへ進みますか？
+        </p>
+        <div class="grid grid-cols-1 gap-2 pt-1">
+          <button onclick="essayGateCreate()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl text-xs transition">
+            📝 例文を作成してからテストへ
+          </button>
+          <button onclick="essayGateSkip()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl text-xs transition">
+            ✅ テストへ進む（例文は作成しない）
+          </button>
+          <button onclick="essayGateHold()" class="w-full bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2.5 rounded-xl text-xs transition">
+            ⏸ あとで決める（保留）
+          </button>
+        </div>
+        <label class="flex items-center gap-2 text-[11px] text-slate-500 font-semibold cursor-pointer select-none pt-1">
+          <input type="checkbox" id="essay-gate-disable-chk" class="w-4 h-4 accent-indigo-600 rounded cursor-pointer">
+          <span>次回からこの確認を表示しない（例文作成機能を使わない）</span>
+        </label>
       </div>
     </div>
 
@@ -412,6 +490,14 @@
             <input type="checkbox" id="pronounce-check-enabled-chk" class="w-5 h-5 accent-indigo-600 rounded cursor-pointer">
           </div>
 
+          <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+            <div>
+              <span class="text-xs font-bold text-slate-800 block">📝 小テスト前に例文作成の確認を表示</span>
+              <span class="text-[10px] text-slate-400 block">ONなら毎回「例文を作成する／テストへ進む」を選択できます</span>
+            </div>
+            <input type="checkbox" id="essay-gate-setting-chk" class="w-5 h-5 accent-indigo-600 rounded cursor-pointer">
+          </div>
+
           <div>
             <div class="flex justify-between items-center text-xs font-semibold text-slate-700 mb-1">
               <span>再生速度（話速）:</span>
@@ -695,6 +781,24 @@
 
       <!-- 修正①：結果サマリー -->
       <p id="result-summary" class="text-slate-600 text-xs leading-relaxed"></p>
+
+      <!-- 📝 結果画面でも例文作成を保留（任意で利用 → 再テストも可能） -->
+      <div id="result-essay-bar" class="hidden bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2 text-left">
+        <p class="text-[11px] font-bold text-emerald-800">
+          📝 この単語リストでTOEFL iBT形式の例文を作成できます（<strong>保留中・任意</strong>）
+        </p>
+        <div class="grid grid-cols-2 gap-2">
+          <button onclick="openEssayModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-lg text-[11px] transition">
+            📝 例文を作成する
+          </button>
+          <button onclick="retakeSmallTest()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-lg text-[11px] transition">
+            🔁 もう一度テスト
+          </button>
+        </div>
+        <p class="text-[10px] text-emerald-700 leading-relaxed">
+          例文を作成して内容を確認したあとに「もう一度テスト」を受けることもできます。
+        </p>
+      </div>
       
       <!-- ✨ 追加：学習単語の一覧表示アコーディオン/リスト -->
       <div class="text-left space-y-2 border-t pt-3">
@@ -767,7 +871,7 @@
 
   <script>
     // 🔗 ここにご自身の GAS ウェブアプリ URL を設定してください
-    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbwBDa-HIe8j5f0uJjgqVMJAbYOGjyl2dLDG6XFEBEv-RA1tS55Mjw-a6yBXE2X8DWM8fA/exec";
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbwE5xOwFi-9gRMqwGx9suSOU6OVx5u1ToPgEdCvN3ZQUD2No4wCnUewMzbQ4tkf2Lc6uA/exec";
 
     const INTERVALS = [1, 3, 7, 14, 30, 60, 90];
     // ✨ 誤答した単語を何問後に再出題するか
@@ -777,6 +881,7 @@
     const SMART_NEW_CAP = 15;    // 1セッションの新規語の上限
     const STORAGE_KEY = 'vocab_app_paused_session_v2';
     const TTS_STORAGE_KEY = 'vocab_app_tts_settings_v2';
+    const ESSAY_GATE_STORAGE_KEY = 'vocab_app_essay_gate_v1'; // 'ask' | 'skip'
     // 🔄 復習済み単語の記憶曲線循環
     const REVIEW_CYCLE_MS = 4000;      // 1単語あたりの表示間隔（ミリ秒）
     const MEMORY_CURVE_MAX_COPIES = 5; // 1周あたりの最大表示回数（最古=5回 / 最新=1回）
@@ -815,6 +920,13 @@
       reviewCycleShown: 0,    // 今回の循環で表示した延べ件数
       reviewCycleLap: 1,      // 現在の周回数
       reviewCycleLastWord: null, // 直前に表示した単語（ラップ境界の連続防止）
+      reviewCycleAddedCount: 0,  // 循環開始後に追加された単語数（増分表示用）
+      // 📝 TOEFL iBT形式の例文生成
+      essayLoading: false,
+      essayData: null,
+      essayGateEnabled: true,        // 小テスト前に例文作成の確認を表示するか
+      essayGateConfirmed: false,     // このセッションで確認済みか（1セッション1回）
+      pendingTestStart: false,       // 例文作成の判断待ち（テスト開始を保留中）
       // ✨ 追加：セッション制限時間管理用
       sessionTimer: null,
       sessionSecondsLeft: 0,
@@ -1169,6 +1281,13 @@
       document.getElementById('tts-autoplay-chk').checked = App.tts.autoPlay;
       document.getElementById('pronounce-check-enabled-chk').checked = App.tts.pronounceCheckEnabled;
 
+      // 📝 例文作成の確認設定を読み込む（'skip' なら確認を出さない）
+      try {
+        const gate = localStorage.getItem(ESSAY_GATE_STORAGE_KEY);
+        App.essayGateEnabled = (gate !== 'skip');
+      } catch (e) {}
+      document.getElementById('essay-gate-setting-chk').checked = App.essayGateEnabled;
+
       // ✨ ここを追加！ (ヘッダーのクイックスイッチの表示を同期)
       updatePronounceToggleUI();
     }
@@ -1221,6 +1340,12 @@
       App.tts.voiceURI = document.getElementById('tts-voice-select').value;
       App.tts.autoPlay = document.getElementById('tts-autoplay-chk').checked;
       App.tts.pronounceCheckEnabled = document.getElementById('pronounce-check-enabled-chk').checked;
+
+      // 📝 例文作成の確認（小テスト前）を表示するかどうか
+      App.essayGateEnabled = document.getElementById('essay-gate-setting-chk').checked;
+      try {
+        localStorage.setItem(ESSAY_GATE_STORAGE_KEY, App.essayGateEnabled ? 'ask' : 'skip');
+      } catch (e) {}
 
       localStorage.setItem(TTS_STORAGE_KEY, JSON.stringify(App.tts));
       showToast('✅ 設定を保存しました', 'success');
@@ -2144,6 +2269,33 @@
         sel.appendChild(opt);
       });
       sel.value = current;
+
+      // 🔁 循環中に新しく復習済みになった単語があれば、循環対象へ自動追加する
+      syncReviewCycleWords();
+    }
+
+    /**
+     * 🔁 循環の開始後に学習した単語を循環対象へ追加する
+     * （開始時点のスナップショットで止まらず、以後に覚えた単語も循環させる）
+     */
+    function syncReviewCycleWords() {
+      if (!App.reviewAutoTimer) return; // 循環していないときは何もしない
+      if (!Array.isArray(App.reviewCycleWords)) App.reviewCycleWords = [];
+
+      const latest = buildMemoryCurveWords_();
+      const known = new Set(App.reviewCycleWords.map(w => String(w.id)));
+      const added = latest.filter(w => !known.has(String(w.id)));
+      if (added.length === 0) return;
+
+      // 学習順（古い→新しい）の末尾＝最新語として追加（表示頻度は最も少なくなる）
+      App.reviewCycleWords = App.reviewCycleWords.concat(added);
+      // 現在の周回のキューにも1回ずつ加えて、次の周回を待たずに巡回へ載せる
+      added.forEach(w => App.reviewCycleQueue.push(w));
+      App.reviewCycleAddedCount += added.length;
+
+      // メタ表示（対象語数・追加数）を更新
+      displayReviewCycleTop(App.reviewCycleLastWord || added[0]);
+      showToast('🔁 循環に追加: ' + added.map(w => w.word).join(', '), 'info');
     }
 
     function onReviewedWordSelect(autoMode = false) {
@@ -2229,6 +2381,7 @@
       App.reviewCycleShown = 0;
       App.reviewCycleLap = 1;
       App.reviewCycleLastWord = null;
+      App.reviewCycleAddedCount = 0;
       // 最初の1周分（記憶曲線ラップ）を生成
       App.reviewCycleQueue.push(...buildMemoryCurveLap_(words, null));
 
@@ -2250,6 +2403,7 @@
       App.reviewCycleQueue = [];
       App.reviewCycleWords = [];
       App.reviewCycleLastWord = null;
+      App.reviewCycleAddedCount = 0;
       const banner = document.getElementById('review-cycle-banner');
       if (banner) banner.classList.add('hidden');
       updateReviewCycleToggleBtn(false);
@@ -2377,7 +2531,9 @@
         meaningEl.title = meaningEl.textContent;
       }
       if (metaEl) {
-        metaEl.textContent = App.reviewCycleShown + ' 語目 ｜ 対象 ' + App.reviewCycleWords.length + ' 語（' + App.reviewCycleLap + ' 周目）';
+        metaEl.textContent = App.reviewCycleShown + ' 語目 ｜ 対象 ' + App.reviewCycleWords.length + ' 語'
+          + (App.reviewCycleAddedCount > 0 ? '（開始後 +' + App.reviewCycleAddedCount + '）' : '')
+          + ' ｜ ' + App.reviewCycleLap + ' 周目';
       }
     }
 
@@ -2393,6 +2549,325 @@
       } else {
         btn.textContent = '🔁 復習循環';
         btn.title = '復習済みの単語を記憶曲線に沿って自動表示（開始/終了）';
+      }
+    }
+
+    // ============================================
+    // 📝 TOEFL iBT形式の例文生成（学習した単語を使用）
+    // ============================================
+
+    /**
+     * 例文モーダルを開く（未生成なら自動生成）
+     */
+    function openEssayModal() {
+      const modal = document.getElementById('essay-modal');
+      if (!modal) return;
+      modal.classList.remove('hidden');
+      updateEssayPendingUI(); // 保留中は「テストへ進む」ボタンを表示
+      if (!App.essayData) {
+        generateEssays(false);
+      } else {
+        updateEssayWordCount_();
+      }
+    }
+
+    function closeEssayModal() {
+      const modal = document.getElementById('essay-modal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    /**
+     * このセッションで学習した単語（重複なし）を取得する
+     */
+    function collectStudiedWords_() {
+      const seen = new Set();
+      const out = [];
+      App.results.forEach(r => {
+        const key = String(r.id);
+        if (seen.has(key)) return;
+        seen.add(key);
+        const w = App.allWords.find(x => String(x.id) === key);
+        const meanings = w && Array.isArray(w.details)
+          ? Array.from(new Set(w.details.map(d => d.meaningJa).filter(Boolean)))
+          : [];
+        out.push({
+          id: key,
+          word: (w && w.word) || r.word || '',
+          meaningJa: meanings.slice(0, 2).join(' ; ')
+        });
+      });
+      return out.filter(x => x.word);
+    }
+
+    function updateEssayWordCount_() {
+      const el = document.getElementById('essay-word-count');
+      if (!el) return;
+      const n = collectStudiedWords_().length;
+      const perEssay = 15;
+      const essays = n > 0 ? Math.ceil(n / perEssay) : 0;
+      el.textContent = '対象: ' + n + ' 語' + (essays > 0 ? '（' + essays + ' 編に分割）' : '');
+    }
+
+    /**
+     * 学習した単語を使ったTOEFL iBT形式の例文を生成する
+     */
+    async function generateEssays(isRegenerate) {
+      if (App.essayLoading) return;
+      const loading = document.getElementById('essay-loading');
+      const errorEl = document.getElementById('essay-error');
+      const content = document.getElementById('essay-content');
+
+      const words = collectStudiedWords_();
+      updateEssayWordCount_();
+
+      if (words.length === 0) {
+        if (errorEl) {
+          errorEl.textContent = 'まだ学習した単語がありません。カード学習を進めてから例文を作成してください。';
+          errorEl.classList.remove('hidden');
+        }
+        if (content) content.innerHTML = '';
+        return;
+      }
+
+      App.essayLoading = true;
+      if (loading) loading.classList.remove('hidden');
+      if (errorEl) { errorEl.classList.add('hidden'); errorEl.textContent = ''; }
+      if (content) content.innerHTML = '';
+      if (isRegenerate) App.essayData = null;
+
+      try {
+        const res = await fetch(GAS_API_URL, {
+          method: 'POST',
+          body: JSON.stringify({ essay: { words: words, perEssay: 15 } }),
+          cache: 'no-store'
+        });
+        if (!res.ok) throw new Error('サーバーエラー (HTTP ' + res.status + ')');
+        const text = await res.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          throw new Error('GASから正しいJSONが返りませんでした（デプロイ状況をご確認ください）');
+        }
+        if (data.error) throw new Error(data.error);
+        if (!data.essays || data.essays.length === 0) {
+          // 旧バージョンのGAS（例文作成APIなし）に当たった場合は再デプロイを促す
+          if (data.success) {
+            throw new Error(
+              'サーバー（GAS）に例文作成APIがまだデプロイされていません。' +
+              'Main.gs を貼り替えて「デプロイ → 新しいバージョンとして管理 → ウェブアプリを更新」を実行してください。'
+            );
+          }
+          throw new Error('例文を生成できませんでした');
+        }
+
+        App.essayData = data;
+        renderEssays(data);
+        // 📝 例文を作成したら、結果画面の「保留中」バーは隠す
+        const resultEssayBar = document.getElementById('result-essay-bar');
+        if (resultEssayBar) resultEssayBar.classList.add('hidden');
+      } catch (e) {
+        if (errorEl) {
+          errorEl.textContent = '⚠️ ' + e.message +
+            '\n\n（AI_API_KEY が未設定の場合は、GASエディタで setAiApiKey("sk-...") を実行してください）';
+          errorEl.classList.remove('hidden');
+        }
+      } finally {
+        App.essayLoading = false;
+        if (loading) loading.classList.add('hidden');
+      }
+    }
+
+    /**
+     * 生成結果を描画する（英文は対象単語をハイライト）
+     */
+    function renderEssays(data) {
+      const content = document.getElementById('essay-content');
+      if (!content) return;
+      content.innerHTML = '';
+
+      data.essays.forEach(essay => {
+        const card = document.createElement('div');
+        card.className = 'bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2.5';
+
+        const head = document.createElement('div');
+        head.className = 'flex items-center justify-between gap-2 border-b border-slate-200 pb-2';
+        const title = document.createElement('h4');
+        title.className = 'text-sm font-bold text-slate-800';
+        title.textContent = '第' + essay.index + '編: ' + (essay.title || '');
+        const meta = document.createElement('span');
+        meta.className = 'text-[10px] font-bold px-2 py-0.5 rounded-full ' +
+          (essay.missing && essay.missing.length ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700');
+        meta.textContent = (essay.missing && essay.missing.length)
+          ? ('未使用 ' + essay.missing.length + ' 語')
+          : '全語使用 ✓';
+        head.appendChild(title);
+        head.appendChild(meta);
+        card.appendChild(head);
+
+        const passage = document.createElement('p');
+        passage.className = 'text-xs text-slate-800 leading-relaxed select-text';
+        passage.innerHTML = highlightEssayWords(escapeHtml(essay.passage || ''), essay.words || []);
+        card.appendChild(passage);
+
+        // 日本語訳（折りたたみ）
+        const details = document.createElement('details');
+        details.className = 'bg-white border border-slate-200 rounded-xl p-2.5';
+        const summary = document.createElement('summary');
+        summary.className = 'text-[11px] font-bold text-indigo-700 cursor-pointer';
+        summary.textContent = '🇯🇵 日本語訳を表示';
+        details.appendChild(summary);
+        const ja = document.createElement('p');
+        ja.className = 'text-xs text-slate-700 leading-relaxed mt-2 select-text';
+        ja.textContent = essay.translationJa || '（翻訳なし）';
+        details.appendChild(ja);
+        card.appendChild(details);
+
+        // 使用単語チップ
+        const chips = document.createElement('div');
+        chips.className = 'flex flex-wrap gap-1 pt-1';
+        (essay.words || []).forEach(w => {
+          const chip = document.createElement('span');
+          const isMissing = (essay.missing || []).some(m => String(m).toLowerCase() === String(w).toLowerCase());
+          chip.className = 'text-[10px] font-bold px-1.5 py-0.5 rounded border ' +
+            (isMissing ? 'bg-rose-50 text-rose-600 border-rose-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200');
+          chip.textContent = w;
+          chips.appendChild(chip);
+        });
+        card.appendChild(chips);
+
+        content.appendChild(card);
+      });
+    }
+
+    /**
+     * 英文中の対象単語をハイライトする（エスケープ済みテキストに対して適用）
+     */
+    function highlightEssayWords(escapedText, words) {
+      if (!words || words.length === 0) return escapedText;
+      const patterns = words
+        .map(w => String(w || '').trim())
+        .filter(Boolean)
+        .map(w => escapeRegExpChars(w).toLowerCase() + '(?:s|es|ed|d|ing|ly)?');
+      if (patterns.length === 0) return escapedText;
+      // 長い単語から順にマッチ（部分一致の取り違え防止）
+      patterns.sort((a, b) => b.length - a.length);
+      const re = new RegExp('\\b(' + patterns.join('|') + ')\\b', 'gi');
+      return escapedText.replace(re, '<mark class="bg-amber-200 text-slate-900 font-bold rounded px-0.5">$1</mark>');
+    }
+
+    function escapeRegExpChars(str) {
+      return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    // ============================================
+    // 📝 確認小テスト前の「例文作成を使うか」選択（保留・選択制）
+    // ============================================
+
+    /**
+     * 確認小テストの直前に、例文作成を使うかどうかを尋ねる
+     * （選ぶまではテスト開始を保留する）
+     */
+    function openEssayGate() {
+      const words = collectStudiedWords_();
+      const countEl = document.getElementById('essay-gate-count');
+      if (countEl) countEl.textContent = String(words.length);
+      const chk = document.getElementById('essay-gate-disable-chk');
+      if (chk) chk.checked = false;
+
+      App.pendingTestStart = true;
+      updateEssayPendingUI();
+      const modal = document.getElementById('essay-gate-modal');
+      if (modal) modal.classList.remove('hidden');
+    }
+
+    function closeEssayGate() {
+      const modal = document.getElementById('essay-gate-modal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    /**
+     * 🔁 結果画面から、同じ単語でもう一度確認小テストを受ける
+     * （例文を作成して内容を確認した後の再テスト用）
+     */
+    function retakeSmallTest() {
+      if (!App.testQueue || App.testQueue.length === 0) {
+        showToast('再テストできる単語がありません', 'error');
+        return;
+      }
+      App.isTesting = true;
+      App.testIndex = 0;
+      App.testResults = [];
+      App.stats.testCorrect = 0;
+      App.stats.testWrong = 0;
+      App.testQueue.sort(() => Math.random() - 0.5);
+
+      document.getElementById('result-card').classList.add('hidden');
+      document.getElementById('test-container').classList.remove('hidden');
+      document.getElementById('pause-btn').classList.remove('hidden');
+      showToast('🔁 もう一度テストを開始します', 'info');
+      showCurrentTestQuestion();
+    }
+
+    /** 「📝 例文を作成してからテストへ」 */
+    function essayGateCreate() {
+      saveEssayGatePreferenceFromCheckbox_();
+      closeEssayGate();
+      App.pendingTestStart = true;
+      updateEssayPendingUI();
+      App.essayData = null;
+      openEssayModal(); // 生成完了後「✅ 例文を確認したので確認小テストへ進む」が表示される
+    }
+
+    /** 「✅ テストへ進む（例文は作成しない）」 */
+    function essayGateSkip() {
+      saveEssayGatePreferenceFromCheckbox_();
+      closeEssayGate();
+      App.pendingTestStart = false;
+      updateEssayPendingUI();
+      App.essayGateConfirmed = true;
+      startTestSession();
+    }
+
+    /** 「⏸ あとで決める（保留）」: テストは開始せず、保留バーからいつでも再開できる */
+    function essayGateHold() {
+      saveEssayGatePreferenceFromCheckbox_();
+      closeEssayGate();
+      App.pendingTestStart = true;
+      updateEssayPendingUI();
+      showToast('⏸ 例文作成を保留しました（「✅ テストへ進む」でテストを開始できます）', 'info');
+    }
+
+    /** 保留バー／例文モーダルから確認小テストへ進む */
+    function essayProceedToTest() {
+      closeEssayModal();
+      closeEssayGate();
+      App.pendingTestStart = false;
+      updateEssayPendingUI();
+      App.essayGateConfirmed = true;
+      startTestSession();
+    }
+
+    /** 保留状態のUI（上部バー・モーダル内ボタン）を同期する */
+    function updateEssayPendingUI() {
+      const bar = document.getElementById('essay-pending-bar');
+      // 確認モーダルを開いている間は、後ろのバーは出さない
+      const gate = document.getElementById('essay-gate-modal');
+      const gateOpen = !!(gate && !gate.classList.contains('hidden'));
+      if (bar) bar.classList.toggle('hidden', !App.pendingTestStart || gateOpen);
+      const btn = document.getElementById('essay-proceed-btn');
+      if (btn) btn.classList.toggle('hidden', !App.pendingTestStart);
+    }
+
+    /** モーダル内の「次回から表示しない」チェックを設定へ反映する */
+    function saveEssayGatePreferenceFromCheckbox_() {
+      const chk = document.getElementById('essay-gate-disable-chk');
+      if (chk && chk.checked) {
+        App.essayGateEnabled = false;
+        try { localStorage.setItem(ESSAY_GATE_STORAGE_KEY, 'skip'); } catch (e) {}
+        const settingChk = document.getElementById('essay-gate-setting-chk');
+        if (settingChk) settingChk.checked = false;
+        showToast('📝 次回から例文作成の確認は表示しません（設定で戻せます）', 'info');
       }
     }
 
@@ -2975,6 +3450,14 @@
       App.stats = { correct: 0, wrong: 0, testCorrect: 0, testWrong: 0 };
       App.isTesting = false;
       App.isTransitioning = false;
+      // 📝 例文作成の選択状態をセッション開始時にリセット（1セッション1回確認）
+      App.essayGateConfirmed = false;
+      App.pendingTestStart = false;
+      App.essayData = null;
+      closeEssayGate();
+      updateEssayPendingUI();
+      const resultEssayBarStart = document.getElementById('result-essay-bar');
+      if (resultEssayBarStart) resultEssayBarStart.classList.add('hidden');
       // ✨ 改善①：逆方向モード（日本語→英語）の読み取り
       App.reverseMode = !!(document.getElementById('reverse-mode-chk') || {}).checked;
       // ✨ 改善②：誤答再出題キューをリセット
@@ -2994,6 +3477,9 @@
       // 🔁 復習循環（手動開始）ボタンを表示
       const reviewCycleToggle = document.getElementById('review-cycle-toggle-btn');
       if (reviewCycleToggle) reviewCycleToggle.classList.remove('hidden');
+      // 📝 例文作成ボタンを表示
+      const essayBtn = document.getElementById('essay-btn');
+      if (essayBtn) essayBtn.classList.remove('hidden');
       updateReviewedWordsDropdown();
     
       showCurrentCard();
@@ -3384,6 +3870,13 @@
       stopReviewCycle();
       const reviewCycleToggleTest = document.getElementById('review-cycle-toggle-btn');
       if (reviewCycleToggleTest) reviewCycleToggleTest.classList.add('hidden');
+
+      // 📝 確認小テストの前に「例文作成を使うかどうか」を自分で選ぶ
+      //    未選択のうちはテスト開始を保留する（設定で確認をオフにもできる）
+      if (App.essayGateEnabled && !App.essayGateConfirmed) {
+        openEssayGate();
+        return;
+      }
       
       // ★【確定処理】カード学習完了時の最終カウントでヘッダーを確実に「5 (覚えた数) / 5」に更新
       const total = App.roundBoundaryIndex || (App.results ? App.results.length : 0);
@@ -4264,6 +4757,23 @@
       // 🔁 復習循環ボタンを非表示・循環を停止
       const reviewCycleToggleHide = document.getElementById('review-cycle-toggle-btn');
       if (reviewCycleToggleHide) reviewCycleToggleHide.classList.add('hidden');
+      // 📝 例文作成ボタンを非表示
+      const essayBtnHide = document.getElementById('essay-btn');
+      if (essayBtnHide) essayBtnHide.classList.add('hidden');
+      closeEssayModal();
+      // 📝 保留状態も解除（結果画面へ）
+      App.pendingTestStart = false;
+      closeEssayGate();
+      updateEssayPendingUI();
+      // 📝 結果画面でも例文作成を「保留（任意）」として使えるようにする
+      const resultEssayBar = document.getElementById('result-essay-bar');
+      if (resultEssayBar) {
+        if (App.essayData) {
+          resultEssayBar.classList.add('hidden');
+        } else {
+          resultEssayBar.classList.remove('hidden');
+        }
+      }
       stopReviewCycle();
 
       // 結果の集計処理（単語の種類数ベース）
@@ -4617,6 +5127,17 @@
       // 🔁 復習循環ボタンを非表示・循環を停止
       const reviewCycleToggleHide2 = document.getElementById('review-cycle-toggle-btn');
       if (reviewCycleToggleHide2) reviewCycleToggleHide2.classList.add('hidden');
+      // 📝 例文作成ボタンを非表示
+      const essayBtnHide2 = document.getElementById('essay-btn');
+      if (essayBtnHide2) essayBtnHide2.classList.add('hidden');
+      closeEssayModal();
+      // 📝 保留状態も解除
+      App.pendingTestStart = false;
+      App.essayData = null;
+      closeEssayGate();
+      updateEssayPendingUI();
+      const resultEssayBarReset = document.getElementById('result-essay-bar');
+      if (resultEssayBarReset) resultEssayBarReset.classList.add('hidden');
       stopReviewCycle();
 
       document.getElementById('loading').classList.remove('hidden');
@@ -4661,6 +5182,13 @@
         // 🔁 復習循環ボタンを非表示・循環を停止
         const reviewCycleToggleHide3 = document.getElementById('review-cycle-toggle-btn');
         if (reviewCycleToggleHide3) reviewCycleToggleHide3.classList.add('hidden');
+        // 📝 例文作成ボタンを非表示
+        const essayBtnHide3 = document.getElementById('essay-btn');
+        if (essayBtnHide3) essayBtnHide3.classList.add('hidden');
+        closeEssayModal();
+        // 📝 保留バーは隠すが、中断中も保留状態は保持する（再開時に復元）
+        const pendingBarPaused = document.getElementById('essay-pending-bar');
+        if (pendingBarPaused) pendingBarPaused.classList.add('hidden');
         stopReviewCycle();
         
         document.getElementById('setup-card').classList.remove('hidden');
@@ -4738,11 +5266,19 @@
         } else {
           if (reviewCycleToggleResume) reviewCycleToggleResume.classList.remove('hidden');
         }
+        // 📝 例文作成ボタンを表示
+        const essayBtnResume = document.getElementById('essay-btn');
+        if (essayBtnResume) essayBtnResume.classList.remove('hidden');
         updateReviewedWordsDropdown();
     
         if (App.isTesting) {
           document.getElementById('test-container').classList.remove('hidden');
           showCurrentTestQuestion();
+        } else if (App.pendingTestStart) {
+          // 📝 例文作成の判断待ちで中断していた場合は、保留状態を復元する
+          document.getElementById('quiz-container').classList.add('hidden');
+          updateEssayPendingUI();
+          showToast('📝 例文作成の選択が保留中です（「✅ テストへ進む」でテスト開始）', 'info');
         } else {
           document.getElementById('quiz-container').classList.remove('hidden');
           showCurrentCard();
@@ -5626,6 +6162,20 @@
     function setupKeyListeners() {
       window.addEventListener('keydown', e => {
         if (e.isComposing) return;
+
+        // 📝 例文モーダルが開いているときは、Escで閉じる以外のキー操作を止める
+        const essayModal = document.getElementById('essay-modal');
+        if (essayModal && !essayModal.classList.contains('hidden')) {
+          if (e.key === 'Escape') closeEssayModal();
+          return;
+        }
+
+        // 📝 テスト前の選択モーダルが開いているときは、Escで「保留」にする
+        const essayGateModal = document.getElementById('essay-gate-modal');
+        if (essayGateModal && !essayGateModal.classList.contains('hidden')) {
+          if (e.key === 'Escape') essayGateHold();
+          return;
+        }
     
         // ✨ 追加：Escキーでクイック辞書モーダルを閉じる
         if (e.key === 'Escape') {

@@ -155,9 +155,12 @@
           <span id="essay-word-count" class="text-slate-500 font-bold">対象: 0 語</span>
           <div class="flex items-center gap-2">
             <button id="essay-regen-btn" onclick="generateEssays(true)" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg transition">🔄 再生成</button>
+            <button id="essay-save-btn" onclick="saveEssaysToStorage_(true)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg transition">💾 保存</button>
             <button onclick="closeEssayModal()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-3 py-1.5 rounded-lg transition">閉じる</button>
           </div>
         </div>
+        <!-- 💾 保存状況（翌日でも復元されます） -->
+        <div id="essay-saved-info" class="hidden text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2.5 py-1.5"></div>
         <p class="text-[11px] text-slate-400 leading-relaxed">
           このセッションで学習した単語をすべて使ったTOEFL iBT形式のアカデミック英文を作成します（1つの文章につき最大15語。それ以上は複数の文章に自動分割します）。
         </p>
@@ -316,6 +319,26 @@
           <div id="ai-tomorrow" class="text-xs bg-amber-50 p-3 rounded-xl border border-amber-200 space-y-1.5"></div>
         </div>
         <div id="ai-plan-error" class="hidden text-xs text-rose-600 bg-rose-50 p-3 rounded-xl border border-rose-200 leading-relaxed whitespace-pre-line"></div>
+
+        <!-- 💬 AIアシスタントへのチャット（今日の分析・弱点・明日のプランを踏まえて回答） -->
+        <div class="border-t pt-3 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-bold text-slate-700">💬 このアシスタントに質問する</span>
+            <button onclick="clearAssistantChat()" class="text-[10px] text-slate-400 hover:text-slate-600 font-bold">履歴を消す</button>
+          </div>
+          <div id="assistant-chat-messages" class="space-y-2 max-h-64 overflow-y-auto text-xs flex flex-col pr-1"></div>
+          <div class="flex items-center space-x-2">
+            <input id="assistant-chat-input" type="text" placeholder="例: 今日の弱点を踏まえて復習の順番を提案して"
+              class="flex-grow bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+              onkeydown="if(event.key==='Enter')sendAssistantChat()">
+            <button onclick="sendAssistantChat()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-xs transition whitespace-nowrap">送信</button>
+          </div>
+          <div class="flex flex-wrap gap-1.5">
+            <button onclick="askAssistantPreset('今日の弱点を3つ挙げて、それぞれ覚え方を教えて')" class="text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-2 py-1 rounded-lg border border-slate-200 transition">🔥 弱点を教えて</button>
+            <button onclick="askAssistantPreset('明日の学習プランをもう少し具体的にして')" class="text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-2 py-1 rounded-lg border border-slate-200 transition">🗓️ 明日のプラン</button>
+            <button onclick="askAssistantPreset('間違いの多い単語を2つ選んで、TOEFL iBT形式の短い例文を作って')" class="text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-2 py-1 rounded-lg border border-slate-200 transition">📝 例文を作って</button>
+          </div>
+        </div>
       </div>
 
       <!-- 弱点克服セクション -->
@@ -459,7 +482,23 @@
           <h3 id="stage-words-title" class="text-base font-bold text-slate-800 flex items-center gap-1.5">
             <span>📚</span><span>Stage 単語一覧</span>
           </h3>
-          <button onclick="closeStageWordsModal()" class="text-slate-400 hover:text-slate-600 text-lg font-bold">✕</button>
+          <div class="flex items-center gap-2">
+            <button id="stage-words-view-btn" onclick="toggleStageWordsViewMode()" class="text-[11px] bg-teal-600 hover:bg-teal-500 text-white font-bold px-2.5 py-1 rounded-lg transition whitespace-nowrap">👁 連続表示</button>
+            <button onclick="closeStageWordsModal()" class="text-slate-400 hover:text-slate-600 text-lg font-bold">✕</button>
+          </div>
+        </div>
+
+        <!-- ✨ ステータス3種のフィルター（学習済み／要復習／未学習） -->
+        <div class="flex items-center justify-between gap-2 text-[11px]">
+          <label class="font-bold text-slate-600 whitespace-nowrap">🔎 表示フィルター</label>
+          <select id="stage-words-filter" onchange="renderStageWordsList()"
+            class="flex-grow bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500">
+            <option value="all">すべて表示</option>
+            <option value="1">✅ 学習済みのみ</option>
+            <option value="2">⚠️ 要復習のみ</option>
+            <option value="3">🆕 未学習のみ</option>
+          </select>
+          <span id="stage-words-filter-count" class="text-[10px] font-bold text-slate-500 whitespace-nowrap"></span>
         </div>
 
         <div id="stage-words-list" class="space-y-2 overflow-y-auto flex-grow text-xs pr-1">
@@ -871,7 +910,7 @@
 
   <script>
     // 🔗 ここにご自身の GAS ウェブアプリ URL を設定してください
-    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbwE5xOwFi-9gRMqwGx9suSOU6OVx5u1ToPgEdCvN3ZQUD2No4wCnUewMzbQ4tkf2Lc6uA/exec";
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbxs9RP47oTwxbeXxDseuOdzQo4XqjYbGqH37QcLUKPPsjTDKOmUSmI0g7fQJAfFaq9AGg/exec";
 
     const INTERVALS = [1, 3, 7, 14, 30, 60, 90];
     // ✨ 誤答した単語を何問後に再出題するか
@@ -882,6 +921,8 @@
     const STORAGE_KEY = 'vocab_app_paused_session_v2';
     const TTS_STORAGE_KEY = 'vocab_app_tts_settings_v2';
     const ESSAY_GATE_STORAGE_KEY = 'vocab_app_essay_gate_v1'; // 'ask' | 'skip'
+    const ESSAY_STORAGE_KEY = 'vocab_app_essays_v1';          // 💾 生成した例文の保存先
+    const ASSISTANT_CHAT_STORAGE_KEY = 'vocab_app_assistant_chat_v1'; // 💬 AIアシスタントの会話履歴
     // 🔄 復習済み単語の記憶曲線循環
     const REVIEW_CYCLE_MS = 4000;      // 1単語あたりの表示間隔（ミリ秒）
     const MEMORY_CURVE_MAX_COPIES = 5; // 1周あたりの最大表示回数（最古=5回 / 最新=1回）
@@ -927,6 +968,13 @@
       essayGateEnabled: true,        // 小テスト前に例文作成の確認を表示するか
       essayGateConfirmed: false,     // このセッションで確認済みか（1セッション1回）
       pendingTestStart: false,       // 例文作成の判断待ち（テスト開始を保留中）
+      stageWordsStage: null,         // 📚 ステージ単語一覧で表示中のステージ
+      essaySavedWords: [],           // 💾 保存した例文の対象単語
+      essaySavedAtLabel: '',         // 💾 保存日時（表示用）
+      aiPlan: null,                  // 🤖 直近のAI分析結果（チャットの文脈に使用）
+      viewModeStage: false,
+      viewTimer: null,
+      viewSeq: 0,
       // ✨ 追加：セッション制限時間管理用
       sessionTimer: null,
       sessionSecondsLeft: 0,
@@ -1346,6 +1394,7 @@
       try {
         localStorage.setItem(ESSAY_GATE_STORAGE_KEY, App.essayGateEnabled ? 'ask' : 'skip');
       } catch (e) {}
+
 
       localStorage.setItem(TTS_STORAGE_KEY, JSON.stringify(App.tts));
       showToast('✅ 設定を保存しました', 'success');
@@ -1985,9 +2034,92 @@
       }
     }
 
+    // ============================================
+    //   ・単語一覧: 表示中の単語を順番に自動表示＋読み上げ（意味は従来どおり3秒表示）
+    //   ・最後まで行ったら先頭に戻って循環（無限ループ）
+    //   ・停止はワンタップ（一覧の「⏹ 停止」ボタン／モーダルを閉じる）
+    // ============================================
+
+
+    /** 単語一覧の連続表示（閲覧モード）開始/停止 */
+    function toggleStageWordsViewMode() {
+      if (App.viewModeStage) {
+        stopStageWordsViewMode();
+      } else {
+        startStageWordsViewMode();
+      }
+    }
+
+    function startStageWordsViewMode() {
+      const items = document.querySelectorAll('#stage-words-list .stage-word-item');
+      if (!items || items.length === 0) {
+        showToast('連続表示できる単語がありません', 'error');
+        return;
+      }
+      App.viewModeStage = true;
+      App.viewSeq++;
+      const seq = App.viewSeq;
+      updateStageWordsViewBtn_();
+      showToast('👁 連続表示を開始（一覧を循環します／「⏹ 停止」で終了）', 'info');
+      runStageWordsStep_(seq, 0);
+    }
+
+    function runStageWordsStep_(seq, idx) {
+      if (!App.viewModeStage || seq !== App.viewSeq) return;
+      const items = document.querySelectorAll('#stage-words-list .stage-word-item');
+      if (!items || items.length === 0) { stopStageWordsViewMode('👁 連続表示を停止しました'); return; }
+      // 🔁 最後まで行ったら先頭に戻って循環する
+      const loop = idx >= items.length;
+      const current = loop ? 0 : idx;
+      const el = items[current];
+      if (loop) { try { items[items.length - 1].classList.remove('ring-2', 'ring-indigo-400', 'bg-white'); } catch (e) {} }
+      el.classList.add('ring-2', 'ring-indigo-400', 'bg-white');
+      if (typeof el.scrollIntoView === 'function') {
+        try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { el.scrollIntoView(); }
+      }
+
+      // 従来どおり「3秒だけ意味を表示」→自動で隠れる（この挙動は変更しない）
+      const revealBox = el.querySelector('.meaning-reveal-box');
+      if (revealBox && el.dataset.meaning) {
+        try { revealStageWordMeaning(revealBox, el.dataset.meaning); } catch (e) {}
+      }
+      if (el.dataset.word) speakText(el.dataset.word);
+
+      App.viewTimer = setTimeout(() => {
+        el.classList.remove('ring-2', 'ring-indigo-400', 'bg-white');
+        runStageWordsStep_(seq, current + 1); // 末尾の次は 0 に戻る（循環）
+      }, 3200); // 意味の3秒表示に合わせて次へ
+    }
+
+    function stopStageWordsViewMode(message) {
+      const wasRunning = App.viewModeStage;
+      App.viewModeStage = false;
+      App.viewSeq++;
+      if (App.viewTimer) {
+        clearTimeout(App.viewTimer);
+        App.viewTimer = null;
+      }
+      document.querySelectorAll('#stage-words-list .stage-word-item').forEach(el => {
+        el.classList.remove('ring-2', 'ring-indigo-400', 'bg-white');
+      });
+      updateStageWordsViewBtn_();
+      if (wasRunning) showToast(message || '👁 連続表示を停止しました', 'info');
+    }
+
+    function updateStageWordsViewBtn_() {
+      const btn = document.getElementById('stage-words-view-btn');
+      if (!btn) return;
+      btn.textContent = App.viewModeStage ? '⏹ 停止' : '👁 連続表示';
+      btn.classList.toggle('bg-teal-600', !App.viewModeStage);
+      btn.classList.toggle('bg-rose-600', App.viewModeStage);
+    }
+
     // 初期化
     window.onload = function() {
       loadTtsSettings();
+      restoreEssaysFromStorage_(); // 💾 前回保存した例文があれば起動時に復元
+      loadAssistantChat_();        // 💬 AIアシスタントの会話履歴を復元
+      renderAssistantChat();
 
       if ('speechSynthesis' in window) {
         window.speechSynthesis.getVoices();
@@ -2068,6 +2200,9 @@
         App.allWords = Array.isArray(data) ? data : [];
       }
 
+      // 📏 範囲指定で使う「ステージ内の単語番号」を採番する（読み込み毎に再計算）
+      buildStageIndexMap_();
+
       const meaningsSet = new Set();
       App.allWords.forEach(item => {
         if (item.details && Array.isArray(item.details)) {
@@ -2142,6 +2277,7 @@
         showAiError(data && data.error ? data.error : 'AI分析を取得できませんでした');
         return;
       }
+      App.aiPlan = data; // 💬 アシスタントのチャットで文脈として使う
       const a = data.analysis || {};
       const rs = data.realStats || {}; // ★ サーバー算出の実データ
       if (loading) loading.classList.add('hidden');
@@ -2251,6 +2387,150 @@
         errEl.classList.remove('hidden');
         errEl.textContent = '⚠️ ' + msg + '\n\n（DeepSeek APIキーの設定: GASエディタで setAiApiKey("sk-...") を一度実行してください）';
       }
+    }
+
+    // ============================================
+    // 💬 AI学習アシスタントとのチャット
+    //   今日の実績・AI分析・弱点・明日のプランを文脈として一緒に送る
+    // ============================================
+    let assistantChatHistory = []; // {role:'user'|'assistant', content:string}
+
+    /**
+     * チャットに渡す「今日の学習状況」の要約を作る
+     */
+    function buildAssistantContext_() {
+      const parts = [];
+      const plan = App.aiPlan;
+      const rs = (plan && plan.realStats) || {};
+      if (rs.today) {
+        const t = rs.today;
+        parts.push('【今日の実績】回答 ' + (t.total || 0) + ' 問 / 正答率 ' + (t.rate || 0) + '% / 手動変更 ' + (t.manualChanges || 0) + ' 件');
+      }
+      if (rs.total) {
+        parts.push('【全体進捗】学習済み ' + (rs.learned || 0) + ' 語 / 全 ' + rs.total + ' 語（未学習 ' + (rs.unlearned || 0) + ' 語）');
+      }
+      if (Array.isArray(rs.weak) && rs.weak.length > 0) {
+        parts.push('【誤答の多い単語】' + rs.weak.slice(0, 10).map(w => w.word + '(' + w.mistakes + '回)').join(', '));
+      }
+      const a = (plan && plan.analysis) || {};
+      if (a.analysis) parts.push('【AI分析】' + a.analysis);
+      if (a.progress) parts.push('【進捗の評価】' + a.progress);
+      if (Array.isArray(a.weaknesses) && a.weaknesses.length > 0) {
+        parts.push('【弱点】' + a.weaknesses.join(', '));
+      }
+      const tp = a.tomorrowPlan || {};
+      if ((tp.stages && tp.stages.length) || tp.advice) {
+        parts.push('【明日のプラン】' + (tp.stages || []).join(', ')
+          + ' / 新規 ' + (tp.newWordsTarget || 0) + ' 語 / 復習 ' + (tp.reviewTarget || 0) + ' 語'
+          + (tp.advice ? ' / ' + tp.advice : ''));
+      }
+      // 今回のセッションで間違えた単語
+      const sessionWeak = (App.results || []).filter(r => !r.isCorrect).map(r => r.word).filter(Boolean);
+      if (sessionWeak.length > 0) {
+        parts.push('【今回のセッションで間違えた単語】' + sessionWeak.slice(0, 20).join(', '));
+      }
+      return parts.join('\n');
+    }
+
+    /** チャット欄を描画する */
+    function renderAssistantChat() {
+      const box = document.getElementById('assistant-chat-messages');
+      if (!box) return;
+      box.innerHTML = '';
+      if (assistantChatHistory.length === 0) {
+        const hello = document.createElement('div');
+        hello.className = 'self-start bg-slate-100 text-slate-600 rounded-xl rounded-bl-sm px-3 py-2 max-w-[92%] whitespace-pre-wrap';
+        hello.textContent = 'こんにちは！🤖 今日の学習データ（実績・弱点・明日のプラン）を踏まえて回答します。下のボタンか自由入力で質問してください。';
+        box.appendChild(hello);
+      }
+      assistantChatHistory.forEach(m => {
+        const div = document.createElement('div');
+        div.className = (m.role === 'user')
+          ? 'self-end bg-indigo-600 text-white rounded-xl rounded-br-sm px-3 py-2 max-w-[92%] whitespace-pre-wrap'
+          : 'self-start bg-slate-100 text-slate-800 rounded-xl rounded-bl-sm px-3 py-2 max-w-[92%] whitespace-pre-wrap';
+        div.textContent = m.content;
+        box.appendChild(div);
+      });
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function saveAssistantChat_() {
+      try {
+        localStorage.setItem(ASSISTANT_CHAT_STORAGE_KEY, JSON.stringify(assistantChatHistory.slice(-40)));
+      } catch (e) {}
+    }
+
+    function loadAssistantChat_() {
+      try {
+        const raw = localStorage.getItem(ASSISTANT_CHAT_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) assistantChatHistory = parsed;
+        }
+      } catch (e) {}
+    }
+
+    function clearAssistantChat() {
+      assistantChatHistory = [];
+      saveAssistantChat_();
+      renderAssistantChat();
+      showToast('💬 チャット履歴を消しました', 'info');
+    }
+
+    /** 定型質問ボタン */
+    function askAssistantPreset(text) {
+      const input = document.getElementById('assistant-chat-input');
+      if (input) input.value = text;
+      sendAssistantChat();
+    }
+
+    /** AIアシスタントへ質問を送る（今日の分析・弱点・明日のプランを文脈として添付） */
+    async function sendAssistantChat() {
+      const input = document.getElementById('assistant-chat-input');
+      const box = document.getElementById('assistant-chat-messages');
+      if (!input) return;
+      const q = input.value.trim();
+      if (!q) return;
+      input.value = '';
+
+      assistantChatHistory.push({ role: 'user', content: q });
+      renderAssistantChat();
+
+      const loading = document.createElement('div');
+      loading.className = 'self-start bg-slate-100 text-slate-400 rounded-xl px-3 py-2 text-xs';
+      loading.textContent = '🤖 考え中...';
+      if (box) {
+        box.appendChild(loading);
+        box.scrollTop = box.scrollHeight;
+      }
+
+      try {
+        const context = buildAssistantContext_();
+        const question = (context ? '【今日の学習状況（アプリの実データ）】\n' + context + '\n\n【質問】\n' : '') + q;
+        const res = await fetch(GAS_API_URL, {
+          method: 'POST',
+          body: JSON.stringify({
+            chat: {
+              question: question,
+              history: assistantChatHistory.slice(0, -1).slice(-10)
+            }
+          }),
+          cache: 'no-store'
+        });
+        const text = await res.text();
+        const data = JSON.parse(text);
+        loading.remove();
+        if (data.error) {
+          assistantChatHistory.push({ role: 'assistant', content: '⚠️ ' + data.error });
+        } else {
+          assistantChatHistory.push({ role: 'assistant', content: data.reply || '（応答がありませんでした）' });
+        }
+      } catch (e) {
+        loading.remove();
+        assistantChatHistory.push({ role: 'assistant', content: '⚠️ 通信エラー: ' + e.message });
+      }
+      saveAssistantChat_();
+      renderAssistantChat();
     }
 
     // ============================================
@@ -2565,13 +2845,23 @@
       modal.classList.remove('hidden');
       updateEssayPendingUI(); // 保留中は「テストへ進む」ボタンを表示
       if (!App.essayData) {
-        generateEssays(false);
+        // 💾 前回保存した例文があればそれを復元して表示（翌日でも消えない）
+        if (restoreEssaysFromStorage_()) {
+          updateEssayWordCount_();
+          renderEssays(App.essayData);
+          updateEssaySavedInfo_();
+          showToast('💾 前回保存した例文を復元しました（再生成もできます）', 'info');
+        } else {
+          generateEssays(false);
+        }
       } else {
         updateEssayWordCount_();
+        updateEssaySavedInfo_();
       }
     }
 
     function closeEssayModal() {
+      essayStopReading_(); // 🔊 音読を止めてから閉じる
       const modal = document.getElementById('essay-modal');
       if (modal) modal.classList.add('hidden');
     }
@@ -2602,7 +2892,10 @@
     function updateEssayWordCount_() {
       const el = document.getElementById('essay-word-count');
       if (!el) return;
-      const n = collectStudiedWords_().length;
+      // 💾 保存済みの例文を表示している場合は、その対象語数を表示する
+      const currentCount = collectStudiedWords_().length;
+      const savedCount = (App.essaySavedWords || []).length;
+      const n = (App.essayData && savedCount > 0 && currentCount === 0) ? savedCount : currentCount;
       const perEssay = 15;
       const essays = n > 0 ? Math.ceil(n / perEssay) : 0;
       el.textContent = '対象: ' + n + ' 語' + (essays > 0 ? '（' + essays + ' 編に分割）' : '');
@@ -2662,7 +2955,11 @@
         }
 
         App.essayData = data;
+        App.essaySavedWords = words;   // 💾 保存用に対象単語を保持
+        App.essaySavedAtLabel = '';
         renderEssays(data);
+        // 💾 生成した例文は自動保存（翌日の再開時にも復元される）
+        saveEssaysToStorage_(false);
         // 📝 例文を作成したら、結果画面の「保留中」バーは隠す
         const resultEssayBar = document.getElementById('result-essay-bar');
         if (resultEssayBar) resultEssayBar.classList.add('hidden');
@@ -2736,6 +3033,214 @@
         });
         card.appendChild(chips);
 
+        // 📖 文脈での意味・誤解しやすい点（#7）
+        if (Array.isArray(essay.contextNotes) && essay.contextNotes.length > 0) {
+          const noteWrap = document.createElement('details');
+          noteWrap.className = 'bg-white border border-slate-200 rounded-xl p-2.5';
+          const noteSummary = document.createElement('summary');
+          noteSummary.className = 'text-[11px] font-bold text-indigo-700 cursor-pointer';
+          noteSummary.textContent = '📖 文脈での意味・誤解しやすい点（' + essay.contextNotes.length + ' 語）';
+          noteWrap.appendChild(noteSummary);
+          const table = document.createElement('table');
+          table.className = 'w-full text-[10px] mt-2 border-collapse';
+          const thead = document.createElement('thead');
+          thead.innerHTML = '<tr class="text-slate-500">'
+            + '<th class="text-left p-1 border-b border-slate-200">単語</th>'
+            + '<th class="text-left p-1 border-b border-slate-200">この文での意味</th>'
+            + '<th class="text-left p-1 border-b border-slate-200">誤解しやすい点</th></tr>';
+          table.appendChild(thead);
+          const tbody = document.createElement('tbody');
+          essay.contextNotes.forEach(n => {
+            const tr = document.createElement('tr');
+            [n.word, n.meaningInContext, n.pitfall].forEach((val, i) => {
+              const td = document.createElement('td');
+              td.className = 'p-1 align-top border-b border-slate-100 '
+                + (i === 0 ? 'font-bold text-indigo-700 whitespace-nowrap' : 'text-slate-700');
+              td.textContent = val || '—';
+              tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+          });
+          table.appendChild(tbody);
+          noteWrap.appendChild(table);
+          card.appendChild(noteWrap);
+        }
+
+        // ✍️ 空所補充（穴埋め）自己テスト（#8）
+        if (Array.isArray(essay.cloze) && essay.cloze.length > 0) {
+          const clozeBlock = document.createElement('div');
+          clozeBlock.className = 'bg-white border border-slate-200 rounded-xl p-2.5 space-y-2';
+          const clozeTitle = document.createElement('div');
+          clozeTitle.className = 'text-[11px] font-bold text-emerald-700';
+          clozeTitle.textContent = '✍️ 空所補充（穴埋め）自己テスト';
+          clozeBlock.appendChild(clozeTitle);
+          essay.cloze.forEach(c => {
+            const row = document.createElement('div');
+            row.className = 'space-y-1 pb-1.5 border-b border-slate-100 last:border-0';
+            const p = document.createElement('p');
+            p.className = 'text-[11px] text-slate-800 leading-relaxed';
+            const parts = String(c.sentence || '').split(/_{2,}/);
+            p.appendChild(document.createTextNode(parts[0] || ''));
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.dataset.answer = c.answer;
+            input.className = 'cloze-input inline-block w-32 mx-1 px-1.5 py-0.5 border-b-2 border-emerald-400 bg-emerald-50 text-[11px] font-bold outline-none text-center';
+            input.placeholder = '入力';
+            p.appendChild(input);
+            p.appendChild(document.createTextNode(parts.length > 1 ? parts.slice(1).join('____') : ''));
+            row.appendChild(p);
+            const ctrl = document.createElement('div');
+            ctrl.className = 'flex items-center gap-2';
+            const checkBtn = document.createElement('button');
+            checkBtn.className = 'text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-2 py-1 rounded-lg transition';
+            checkBtn.textContent = '答え合わせ';
+            const res = document.createElement('span');
+            res.className = 'text-[10px] font-bold text-slate-400';
+            checkBtn.addEventListener('click', () => {
+              const ok = input.value.trim().toLowerCase() === String(c.answer).trim().toLowerCase();
+              res.textContent = ok ? '✅ 正解！' : ('❌ 不正解 → 正解: ' + c.answer);
+              res.className = 'text-[10px] font-bold ' + (ok ? 'text-emerald-600' : 'text-rose-600');
+            });
+            ctrl.appendChild(checkBtn);
+            ctrl.appendChild(res);
+            row.appendChild(ctrl);
+            clozeBlock.appendChild(row);
+          });
+          card.appendChild(clozeBlock);
+        }
+
+        // 🔄 パラフレーズ練習（#9）
+        if (Array.isArray(essay.paraphrases) && essay.paraphrases.length > 0) {
+          const paraBlock = document.createElement('div');
+          paraBlock.className = 'bg-white border border-slate-200 rounded-xl p-2.5 space-y-1.5';
+          const paraTitle = document.createElement('div');
+          paraTitle.className = 'text-[11px] font-bold text-indigo-700';
+          paraTitle.textContent = '🔄 パラフレーズ（言い換え）練習';
+          paraBlock.appendChild(paraTitle);
+          essay.paraphrases.forEach(p => {
+            const row = document.createElement('div');
+            row.className = 'flex items-center justify-between gap-2 text-[11px] text-slate-700 border-b border-slate-100 last:border-0 pb-1';
+            const txt = document.createElement('div');
+            txt.className = 'flex-grow';
+            const a = document.createElement('span');
+            a.className = 'font-semibold text-slate-800';
+            a.textContent = p.original;
+            const arrow = document.createElement('span');
+            arrow.className = 'mx-1 text-indigo-500 font-bold';
+            arrow.textContent = '→';
+            const b2 = document.createElement('span');
+            b2.className = 'text-slate-600';
+            b2.textContent = p.alternative;
+            txt.appendChild(a);
+            txt.appendChild(arrow);
+            txt.appendChild(b2);
+            const sp = document.createElement('button');
+            sp.className = 'text-xs text-indigo-600 px-1';
+            sp.textContent = '🔊';
+            sp.addEventListener('click', () => speakText(p.alternative));
+            row.appendChild(txt);
+            row.appendChild(sp);
+            paraBlock.appendChild(row);
+          });
+          card.appendChild(paraBlock);
+        }
+
+        // ✍️ 自作文プロンプト（#10）
+        if (Array.isArray(essay.writingPrompts) && essay.writingPrompts.length > 0) {
+          const writeBlock = document.createElement('div');
+          writeBlock.className = 'bg-white border border-slate-200 rounded-xl p-2.5 space-y-2';
+          const writeTitle = document.createElement('div');
+          writeTitle.className = 'text-[11px] font-bold text-amber-700';
+          writeTitle.textContent = '✍️ 自作文（自分の文を作る）';
+          writeBlock.appendChild(writeTitle);
+          essay.writingPrompts.forEach(prompt => {
+            const row = document.createElement('div');
+            row.className = 'space-y-1 pb-2 border-b border-slate-100 last:border-0';
+            const label = document.createElement('p');
+            label.className = 'text-[11px] text-slate-700 font-semibold';
+            label.textContent = '🔸 ' + prompt;
+            row.appendChild(label);
+            const ta = document.createElement('textarea');
+            ta.rows = 2;
+            ta.className = 'w-full text-[11px] p-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500';
+            ta.placeholder = 'ここに自分の英文を書いて保存できます';
+            const key = writingNoteKey_(prompt);
+            ta.value = loadWritingNote_(key);
+            row.appendChild(ta);
+            const ctrl = document.createElement('div');
+            ctrl.className = 'flex items-center gap-2';
+            const saveBtn = document.createElement('button');
+            saveBtn.className = 'text-[10px] bg-amber-600 hover:bg-amber-700 text-white font-bold px-2 py-1 rounded-lg transition';
+            saveBtn.textContent = '💾 保存';
+            saveBtn.addEventListener('click', () => {
+              saveWritingNote_(key, ta.value);
+              showToast('💾 自分の英文を保存しました（この端末に保存）', 'success');
+            });
+            const askBtn = document.createElement('button');
+            askBtn.className = 'text-[10px] bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2 py-1 rounded-lg transition';
+            askBtn.textContent = '🤖 添削してもらう';
+            askBtn.addEventListener('click', () => {
+              const text = ta.value.trim();
+              openAiChat('次の英文をTOEFLの観点で添削してください。文法・語法の誤り、より自然な言い方、TOEFLで使える表現を教えてください。\n\n' + (text || '（未入力）'));
+            });
+            ctrl.appendChild(saveBtn);
+            ctrl.appendChild(askBtn);
+            row.appendChild(ctrl);
+            writeBlock.appendChild(row);
+          });
+          card.appendChild(writeBlock);
+        }
+
+        // 🔊 文単位の音読支援（#11）
+        const sentences = splitSentences_(essay.passage || '');
+        if (sentences.length > 0) {
+          const readBlock = document.createElement('div');
+          readBlock.className = 'bg-white border border-slate-200 rounded-xl p-2.5 space-y-1.5';
+          const head2 = document.createElement('div');
+          head2.className = 'flex items-center justify-between';
+          const readTitle = document.createElement('span');
+          readTitle.className = 'text-[11px] font-bold text-teal-700';
+          readTitle.textContent = '🔊 文単位の音読（再生・リピート）';
+          const ctrl2 = document.createElement('div');
+          ctrl2.className = 'flex items-center gap-1.5';
+          const playAll = document.createElement('button');
+          playAll.className = 'text-[10px] bg-teal-600 hover:bg-teal-700 text-white font-bold px-2 py-1 rounded-lg transition';
+          playAll.textContent = '▶ 通し再生';
+          playAll.addEventListener('click', () => essayPlayAll_(card));
+          const stopBtn = document.createElement('button');
+          stopBtn.className = 'text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-2 py-1 rounded-lg transition';
+          stopBtn.textContent = '⏹ 停止';
+          stopBtn.addEventListener('click', () => essayStopReading_());
+          ctrl2.appendChild(playAll);
+          ctrl2.appendChild(stopBtn);
+          head2.appendChild(readTitle);
+          head2.appendChild(ctrl2);
+          readBlock.appendChild(head2);
+
+          sentences.forEach((s, i) => {
+            const row = document.createElement('div');
+            row.className = 'essay-sentence flex items-start gap-1.5 text-[11px] text-slate-700 rounded-lg px-1.5 py-1 transition';
+            row.dataset.idx = String(i);
+            const sp = document.createElement('button');
+            sp.className = 'text-xs text-teal-600 px-0.5 shrink-0';
+            sp.textContent = '🔊';
+            sp.addEventListener('click', () => essayPlayOne_(card, i));
+            const rep = document.createElement('button');
+            rep.className = 'essay-repeat-btn text-[10px] text-slate-400 px-0.5 shrink-0 font-bold';
+            rep.textContent = '🔁';
+            rep.title = 'この文を繰り返し再生';
+            rep.addEventListener('click', () => essayToggleRepeat_(card, i, rep));
+            const txt = document.createElement('span');
+            txt.className = 'flex-grow select-text';
+            txt.textContent = s;
+            row.appendChild(sp);
+            row.appendChild(rep);
+            row.appendChild(txt);
+            readBlock.appendChild(row);
+          });
+          card.appendChild(readBlock);
+        }
+
         content.appendChild(card);
       });
     }
@@ -2743,6 +3248,146 @@
     /**
      * 英文中の対象単語をハイライトする（エスケープ済みテキストに対して適用）
      */
+    // ============================================
+    // 🔊 文単位の音読（#11）／✍️ 自作文メモの保存（#10）
+    // ============================================
+    let essayReadToken = 0;
+    let essayReadState = { card: null, idx: -1, all: false, repeatIdx: -1 };
+    const WRITING_NOTE_STORAGE_KEY = 'vocab_app_writing_notes_v1';
+
+    /** 長文を文単位に分割する */
+    function splitSentences_(text) {
+      const t = String(text || '').replace(/\s+/g, ' ').trim();
+      if (!t) return [];
+      const parts = t.match(/[^.!?]+[.!?]+["')\]]*|[^.!?]+$/g);
+      return (parts || []).map(s => s.trim()).filter(Boolean);
+    }
+
+    /** 指定テキストを読み上げ、終了時にコールバック（連続再生用） */
+    function essaySpeak_(text, onEnd) {
+      if (!('speechSynthesis' in window) || !text) {
+        if (onEnd) onEnd();
+        return;
+      }
+      const u = new SpeechSynthesisUtterance(String(text));
+      u.lang = 'en-US';
+      u.rate = App.tts.rate || 0.9;
+      const voices = window.speechSynthesis.getVoices() || [];
+      let v = null;
+      if (App.tts.voiceURI) v = voices.find(x => x.voiceURI === App.tts.voiceURI);
+      if (!v) {
+        v = voices.find(x => x.name && x.name.includes('Google US English'))
+          || voices.find(x => x.lang === 'en-US' || x.lang === 'en_US')
+          || voices.find(x => x.lang && x.lang.startsWith('en'));
+      }
+      if (v) u.voice = v;
+      if (onEnd) u.onend = () => onEnd();
+      window.speechSynthesis.speak(u);
+    }
+
+    /** 音読を停止してハイライトを解除する */
+    function essayStopReading_() {
+      essayReadToken++;
+      essayReadState = { card: null, idx: -1, all: false, repeatIdx: -1 };
+      try { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); } catch (e) {}
+      document.querySelectorAll('.essay-sentence').forEach(el => el.classList.remove('bg-amber-100'));
+      document.querySelectorAll('.essay-repeat-btn').forEach(b => b.classList.remove('bg-amber-500', 'text-white'));
+    }
+
+    function essaySentences_(cardEl) {
+      return cardEl ? Array.from(cardEl.querySelectorAll('.essay-sentence')) : [];
+    }
+
+    /** 1文だけ再生 */
+    function essayPlayOne_(cardEl, idx) {
+      essayStopReading_();
+      essayReadState = { card: cardEl, idx: idx, all: false, repeatIdx: -1 };
+      essayPlayCurrent_();
+    }
+
+    /** 通し再生（文単位で順に再生） */
+    function essayPlayAll_(cardEl) {
+      essayStopReading_();
+      const items = essaySentences_(cardEl);
+      if (items.length === 0) return;
+      essayReadState = { card: cardEl, idx: 0, all: true, repeatIdx: -1 };
+      showToast('▶ 通し再生を開始（文単位・⏹ 停止で止まります）', 'info');
+      essayPlayCurrent_();
+    }
+
+    /** この文をリピート再生するトグル */
+    function essayToggleRepeat_(cardEl, idx, btn) {
+      const isOn = essayReadState.card === cardEl && essayReadState.repeatIdx === idx;
+      document.querySelectorAll('.essay-repeat-btn').forEach(b => b.classList.remove('bg-amber-500', 'text-white'));
+      if (isOn) {
+        essayReadState.repeatIdx = -1;
+        showToast('🔁 リピートを解除しました', 'info');
+        return;
+      }
+      essayReadToken++; // 進行中の再生を止める
+      try { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); } catch (e) {}
+      essayReadState = { card: cardEl, idx: idx, all: false, repeatIdx: idx };
+      btn.classList.add('bg-amber-500', 'text-white');
+      showToast('🔁 この文を繰り返し再生します（もう一度押すと解除）', 'info');
+      essayPlayCurrent_();
+    }
+
+    /** 現在の文を再生し、終了後にリピート／次の文へ進む */
+    function essayPlayCurrent_() {
+      const st = essayReadState;
+      const cardEl = st.card;
+      if (!cardEl) return;
+      const items = essaySentences_(cardEl);
+      if (st.idx < 0 || st.idx >= items.length) { essayStopReading_(); return; }
+
+      const token = essayReadToken;
+      items.forEach(el => el.classList.remove('bg-amber-100'));
+      const el = items[st.idx];
+      el.classList.add('bg-amber-100');
+      if (typeof el.scrollIntoView === 'function') {
+        try { el.scrollIntoView({ block: 'nearest' }); } catch (e) {}
+      }
+
+      const txtEl = el.querySelector('span.select-text');
+      const text = txtEl ? txtEl.textContent : '';
+      essaySpeak_(text, () => {
+        if (token !== essayReadToken) return; // 停止・別操作で中断された
+        if (essayReadState.repeatIdx === st.idx) {
+          setTimeout(() => { if (token === essayReadToken) essayPlayCurrent_(); }, 700);
+          return;
+        }
+        if (essayReadState.all) {
+          essayReadState.idx++;
+          setTimeout(() => { if (token === essayReadToken) essayPlayCurrent_(); }, 700);
+          return;
+        }
+        el.classList.remove('bg-amber-100');
+      });
+    }
+
+    /** ✍️ 自作文メモ（端末ローカル保存） */
+    function writingNoteKey_(prompt) {
+      let h = 0;
+      const s = String(prompt || '');
+      for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+      return 'wp_' + Math.abs(h);
+    }
+
+    function loadWritingNote_(key) {
+      try {
+        const all = JSON.parse(localStorage.getItem(WRITING_NOTE_STORAGE_KEY) || '{}');
+        return all[key] || '';
+      } catch (e) { return ''; }
+    }
+
+    function saveWritingNote_(key, value) {
+      try {
+        const all = JSON.parse(localStorage.getItem(WRITING_NOTE_STORAGE_KEY) || '{}');
+        all[key] = String(value || '');
+        localStorage.setItem(WRITING_NOTE_STORAGE_KEY, JSON.stringify(all));
+      } catch (e) {}
+    }
+
     function highlightEssayWords(escapedText, words) {
       if (!words || words.length === 0) return escapedText;
       const patterns = words
@@ -2758,6 +3403,82 @@
 
     function escapeRegExpChars(str) {
       return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    // ============================================
+    // 💾 生成した例文の保存・復元（翌日でも消えないようにする）
+    // ============================================
+
+    /**
+     * 例文を localStorage へ保存する
+     * @param {boolean} notify 保存完了トーストを出すか（自動保存時は false）
+     */
+    function saveEssaysToStorage_(notify) {
+      if (!App.essayData || !Array.isArray(App.essayData.essays) || App.essayData.essays.length === 0) {
+        if (notify) showToast('保存できる例文がありません', 'error');
+        return false;
+      }
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const label = now.getFullYear() + '/' + pad(now.getMonth() + 1) + '/' + pad(now.getDate())
+        + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
+      const payload = {
+        savedAt: now.toISOString(),
+        savedAtLabel: label,
+        totalWords: App.essayData.totalWords || (App.essaySavedWords || []).length,
+        perEssay: App.essayData.perEssay || 15,
+        words: App.essaySavedWords || [],
+        essays: App.essayData.essays
+      };
+      try {
+        localStorage.setItem(ESSAY_STORAGE_KEY, JSON.stringify(payload));
+        App.essaySavedAtLabel = label;
+        updateEssaySavedInfo_();
+        if (notify) showToast('💾 例文を保存しました（次回起動時にも復元されます）', 'success');
+        return true;
+      } catch (e) {
+        if (notify) showToast('❌ 保存に失敗しました: ' + e.message, 'error');
+        return false;
+      }
+    }
+
+    /**
+     * 保存済みの例文を読み込む（翌日の再開時に復元）
+     */
+    function restoreEssaysFromStorage_() {
+      try {
+        const raw = localStorage.getItem(ESSAY_STORAGE_KEY);
+        if (!raw) return false;
+        const saved = JSON.parse(raw);
+        if (!saved || !Array.isArray(saved.essays) || saved.essays.length === 0) return false;
+        App.essayData = {
+          essays: saved.essays,
+          totalWords: saved.totalWords,
+          perEssay: saved.perEssay
+        };
+        App.essaySavedWords = Array.isArray(saved.words) ? saved.words : [];
+        App.essaySavedAtLabel = saved.savedAtLabel || '';
+        return true;
+      } catch (e) {
+        console.warn('例文の復元に失敗:', e);
+        return false;
+      }
+    }
+
+    /**
+     * 保存状況の表示を更新する
+     */
+    function updateEssaySavedInfo_() {
+      const el = document.getElementById('essay-saved-info');
+      if (!el) return;
+      if (App.essayData && App.essaySavedAtLabel) {
+        const n = (App.essaySavedWords || []).length;
+        const essays = (App.essayData.essays || []).length;
+        el.textContent = '💾 保存済み: ' + App.essaySavedAtLabel + '（' + n + '語 / ' + essays + '編）— 翌日もこの内容が復元されます';
+        el.classList.remove('hidden');
+      } else {
+        el.classList.add('hidden');
+      }
     }
 
     // ============================================
@@ -3065,11 +3786,44 @@
     }
 
     function openStageWordsModal(stageName) {
-      const words = App.allWords.filter(w => w.stage === stageName);
-      document.getElementById('stage-words-title').innerHTML = `<span>📚</span><span>${stageName} 単語一覧 (全 ${words.length} 単語)</span>`;
-    
+      // 📚 ステージを記憶し、フィルターは「すべて表示」から開始
+      App.stageWordsStage = stageName;
+      const filterEl = document.getElementById('stage-words-filter');
+      if (filterEl) filterEl.value = 'all';
+      document.getElementById('stage-words-modal').classList.remove('hidden');
+      renderStageWordsList();
+    }
+
+    /**
+     * 📚 ステージ単語一覧の描画（ステータス3種のフィルター対応）
+     * all / 1(学習済み) / 2(要復習) / 3(未学習) で絞り込む
+     */
+    function renderStageWordsList() {
+      const stageName = App.stageWordsStage;
+      if (!stageName) return;
+      // 👁 連続表示中にリストを描き替えると要素参照が古くなるため、いったん停止する
+      if (App.viewModeStage) stopStageWordsViewMode();
+      const allWords = App.allWords.filter(w => w.stage === stageName);
+      const filterEl = document.getElementById('stage-words-filter');
+      const filter = filterEl ? filterEl.value : 'all';
+      const words = (filter === 'all')
+        ? allWords
+        : allWords.filter(w => String(w.status) === String(filter));
+
+      document.getElementById('stage-words-title').innerHTML = `<span>📚</span><span>${stageName} 単語一覧 (全 ${allWords.length} 単語)</span>`;
+      const countEl = document.getElementById('stage-words-filter-count');
+      if (countEl) countEl.textContent = `表示 ${words.length} / ${allWords.length} 語`;
+
       const listEl = document.getElementById('stage-words-list');
       listEl.innerHTML = '';
+
+      if (words.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'text-center text-slate-400 py-4 text-xs font-semibold';
+        empty.textContent = '該当する単語がありません（フィルターを変更してください）';
+        listEl.appendChild(empty);
+        return;
+      }
     
       words.forEach(w => {
         // 意味の重複排除
@@ -3080,7 +3834,9 @@
         // ★ インライン onclick への文字列埋め込みをやめ、DOM 生成 + addEventListener に変更。
         //   単語や意味にアポストロフィ（don't など）や引用符が含まれても安全。
         const item = document.createElement('div');
-        item.className = 'p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2';
+        item.className = 'stage-word-item p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2 transition';
+        item.dataset.word = w.word || '';
+        item.dataset.meaning = allMeanings;
     
         const headRow = document.createElement('div');
         headRow.className = 'flex items-center justify-between';
@@ -3177,6 +3933,11 @@
         if (data.error) throw new Error(data.error);
     
         renderDashboard();
+        // 📚 単語一覧を開いている場合は、フィルター表示と件数を即時更新
+        const stageModal = document.getElementById('stage-words-modal');
+        if (stageModal && !stageModal.classList.contains('hidden')) {
+          renderStageWordsList();
+        }
         showToast('✅ ステータスを更新し、学習記録に保存しました！', 'success');
     
       } catch (err) {
@@ -3209,6 +3970,8 @@
     }
 
     function closeStageWordsModal() {
+      // 👁 連続表示を止めてから閉じる
+      if (App.viewModeStage) stopStageWordsViewMode();
       document.getElementById('stage-words-modal').classList.add('hidden');
     }
 
@@ -3273,12 +4036,16 @@
      * 復習語は「日→英（思い出し先行）」、新規語は「英→日」で出題する
      */
     function buildSmartQueue() {
+      ensureStageIndex_();
       const today = getTodayDateString();
       const imp = document.getElementById('importance-select').value;
-      // まず選択ステージ・重要性で絞る
+      // 🎯 範囲指定（ステージ内の単語番号）も必ず適用する
+      const bounds = getRangeBounds_();
+      // まず選択ステージ・重要性・範囲で絞る
       const pool = App.allWords.filter(w =>
         App.selectedStages.has(w.stage) &&
-        (imp === 'ALL' || w.importance === imp)
+        (imp === 'ALL' || w.importance === imp) &&
+        isWithinStageRange_(w, bounds)
       );
       // 復習対象: 要復習ステータス or 復習日が今日以前
       const reviewPool = pool.filter(w =>
@@ -3330,21 +4097,140 @@
     }
 
     /**
-     * 範囲指定（単語ID）に対応したフィルタリング
+     * ✅ 範囲指定ロジックの自己診断（デグレ検出用）
+     * 使い方: ブラウザのコンソールで selfTestWordRange() を実行
+     *   ・「ステージ内の単語番号」で採番されているか
+     *   ・境界判定が正しいか
+     *   ・実データで範囲どおりに絞れているか
+     * をチェックし、結果を返します（コード修正後は必ず実行してください）。
+     */
+    function selfTestWordRange() {
+      const lines = [];
+      let ng = 0;
+      ensureStageIndex_();
+
+      // 1) ステージ内の採番が 1..N になっているか
+      const byStage = new Map();
+      App.allWords.forEach(w => {
+        const st = String((w && w.stage) || '');
+        if (!byStage.has(st)) byStage.set(st, []);
+        byStage.get(st).push(w);
+      });
+      let numberingOk = true;
+      byStage.forEach(list => {
+        const sorted = list.slice().sort((a, b) => (parseInt(a.id, 10) || 0) - (parseInt(b.id, 10) || 0));
+        sorted.forEach((w, i) => { if (w.stageIndex !== i + 1) numberingOk = false; });
+      });
+      if (!numberingOk) ng++;
+      lines.push((numberingOk ? '✅' : '❌') + ' ステージ内の採番（1始まり）');
+
+      // 2) 境界判定
+      const sample = { id: 'x', stageIndex: 5 };
+      [
+        [{ hasStart: true, hasEnd: true, startNum: 1, endNum: 20 }, true, '1-20 の範囲内（5番目）'],
+        [{ hasStart: true, hasEnd: true, startNum: 6, endNum: 20 }, false, '6-20 の範囲外（5番目）'],
+        [{ hasStart: true, hasEnd: true, startNum: 1, endNum: 4 }, false, '1-4 の範囲外（5番目）'],
+        [{ hasStart: false, hasEnd: false }, true, '範囲未指定はすべて対象']
+      ].forEach(([bounds, expected, label]) => {
+        const ok = isWithinStageRange_(sample, bounds) === expected;
+        if (!ok) ng++;
+        lines.push((ok ? '✅' : '❌') + ' 判定: ' + label);
+      });
+
+      // 3) 実データでの絞り込み（範囲1-2）
+      const startEl = document.getElementById('range-start-input');
+      const endEl = document.getElementById('range-end-input');
+      const prevStart = startEl.value;
+      const prevEnd = endEl.value;
+      startEl.value = '1';
+      endEl.value = '2';
+      const filtered = filterWords();
+      const expected = App.allWords.filter(w =>
+        App.selectedStages.has(w.stage) && w.stageIndex >= 1 && w.stageIndex <= 2
+      ).length;
+      const rangeOk = filtered.every(w => w.stageIndex >= 1 && w.stageIndex <= 2);
+      const countOk = filtered.length === expected;
+      startEl.value = prevStart;
+      endEl.value = prevEnd;
+      if (!rangeOk || !countOk) ng++;
+      lines.push((rangeOk && countOk ? '✅' : '❌') + ' 実データ: 範囲1-2 → ' + filtered.length + ' 語（期待 ' + expected + ' 語）');
+
+      const out = '📏 範囲指定セルフテスト: ' + (ng === 0 ? 'すべてOK（デグレなし）' : (ng + ' 件の異常')) + '\n' + lines.join('\n');
+      try { console.log(out); } catch (e) {}
+      return out;
+    }
+
+    /**
+     * 📏 範囲指定（ステージ内の単語番号）の判定を1か所に集約する
+     *
+     * ★重要（デグレ防止）:
+     *   範囲指定は「全体の単語ID」ではなく「そのステージ内で何番目か」で判定する。
+     *   過去に全体IDと比較する実装に変わってしまい、範囲指定が効かなくなった経緯があるため、
+     *   判定ロジックは必ず getRangeBounds_() / isWithinStageRange_() を使うこと
+     *   （filterWords と buildSmartQueue の両方がこの関数を共有している）。
+     */
+    function getRangeBounds_() {
+      const startRaw = String(document.getElementById('range-start-input').value || '').trim();
+      const endRaw = String(document.getElementById('range-end-input').value || '').trim();
+      const startNum = parseInt(startRaw, 10);
+      const endNum = parseInt(endRaw, 10);
+      return {
+        hasStart: startRaw !== '' && !isNaN(startNum),
+        hasEnd: endRaw !== '' && !isNaN(endNum),
+        startNum: startNum,
+        endNum: endNum
+      };
+    }
+
+    /**
+     * 単語が指定範囲（ステージ内の単語番号）に入っているか
+     */
+    function isWithinStageRange_(w, bounds) {
+      if (!w || !bounds) return true;
+      const pos = (typeof w.stageIndex === 'number' && w.stageIndex > 0) ? w.stageIndex : null;
+      if (pos === null) return true; // 判定できない場合は除外しない（安全側）
+      if (bounds.hasStart && pos < bounds.startNum) return false;
+      if (bounds.hasEnd && pos > bounds.endNum) return false;
+      return true;
+    }
+
+    /**
+     * 各単語に「ステージ内での順番（1始まり）」を付与する
+     * （ステージごとにIDの昇順で 1, 2, 3... と採番）
+     */
+    function buildStageIndexMap_() {
+      if (!Array.isArray(App.allWords)) return;
+      const byStage = new Map();
+      App.allWords.forEach(w => {
+        const st = String((w && w.stage) || '');
+        if (!byStage.has(st)) byStage.set(st, []);
+        byStage.get(st).push(w);
+      });
+      byStage.forEach(list => {
+        list.sort((a, b) => (parseInt(a.id, 10) || 0) - (parseInt(b.id, 10) || 0));
+        list.forEach((w, i) => { w.stageIndex = i + 1; });
+      });
+    }
+
+    /** stageIndex が未採番なら採番する（読み込み順に依存しないための保険） */
+    function ensureStageIndex_() {
+      if (!Array.isArray(App.allWords) || App.allWords.length === 0) return;
+      if (App.allWords.every(w => typeof w.stageIndex === 'number' && w.stageIndex > 0)) return;
+      buildStageIndexMap_();
+    }
+
+    /**
+     * 範囲指定に対応したフィルタリング
      */
     function filterWords() {
+      ensureStageIndex_();
       const imp = document.getElementById('importance-select').value;
       const mode = document.getElementById('mode-select').value;
       const weakThreshold = parseInt(document.getElementById('weak-count-input').value, 10) || 1;
       const today = getTodayDateString();
-    
-      // IDによる範囲指定（文字列または数値として比較）
-      const rangeStart = document.getElementById('range-start-input').value.trim();
-      const rangeEnd = document.getElementById('range-end-input').value.trim();
-      const startNum = parseInt(rangeStart, 10);
-      const endNum = parseInt(rangeEnd, 10);
-      const hasStart = rangeStart !== "" && !isNaN(startNum);
-      const hasEnd = rangeEnd !== "" && !isNaN(endNum);
+
+      // 📏 範囲指定（ステージ内の単語番号）— 判定は共通関数に集約
+      const bounds = getRangeBounds_();
 
       // 🎯 スマート学習モードは専用の構成ロジックを使う
       if (mode === 'smart') {
@@ -3356,11 +4242,9 @@
         if (!App.selectedStages.has(w.stage)) return false;
         if (imp !== 'ALL' && w.importance !== imp) return false;
     
-        // 2. IDによる範囲指定フィルター（★ すべてのモードで適用する）
-        //    以前は review / unlearned / weak モードで範囲指定が無視されていた
-        const currentId = parseInt(w.id, 10);
-        if (hasStart && currentId < startNum) return false;
-        if (hasEnd && currentId > endNum) return false;
+        // 2. 範囲指定フィルター（★ すべてのモードで適用する）
+        //    「ステージ内の単語番号」で判定する（全体IDではない）
+        if (!isWithinStageRange_(w, bounds)) return false;
     
         // 3. モード別フィルター
         if (mode === 'review') {

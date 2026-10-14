@@ -69,6 +69,80 @@
     body.pc-mode #stage-breakdown-list { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
     body.pc-mode #weakness-chart-container { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
     body.pc-mode #result-word-list { max-height: 22rem; }
+
+    /* 🖥 PC版: 回答ボタン（まだ/簡単/ふつう/難しい）を1行4列に格納する */
+    body.pc-mode #answer-buttons {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.6rem;
+      align-items: stretch;
+    }
+    body.pc-mode #answer-buttons > * { margin-top: 0 !important; }
+    body.pc-mode #answer-buttons > div { display: contents; } /* 中の3ボタンを外側の4列グリッドに参加させる */
+    body.pc-mode #answer-buttons button { width: 100%; height: 100%; }
+
+    /* 🖥 PC版: 一覧を見やすく（モーダルを広げ、2カラム表示） */
+    body.pc-mode #stage-words-modal > div { max-width: 64rem; }
+    body.pc-mode #stage-words-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.6rem;
+      align-content: start;
+    }
+    body.pc-mode #result-word-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.45rem;
+      max-height: 26rem;
+    }
+
+    /* 🖥 PC版: 復習循環のバナーを1行に圧縮し、ページ全体がスクロールしないようにする */
+    body.pc-mode #review-cycle-banner {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 0.5rem 0.9rem;
+      margin-bottom: 0.4rem;
+    }
+    body.pc-mode #review-cycle-banner > div { margin: 0 !important; }
+    body.pc-mode #review-cycle-banner > div:first-child { flex: 0 0 auto; }
+    body.pc-mode #review-cycle-banner > div:first-child > span:last-child { display: none; } /* 長いタイトルはPCでは省略 */
+    body.pc-mode #review-cycle-banner > div:last-child { flex: 1 1 auto; gap: 0.75rem; align-items: center; }
+    body.pc-mode #review-cycle-banner-word { font-size: 1.15rem; }
+    body.pc-mode #review-cycle-banner-meaning { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    body.pc-mode #review-cycle-banner-meta { flex: 0 0 auto; }
+
+    /* 🖥 PC版: 学習画面の余白を詰めて、循環バナーが出てもスクロールしないようにする */
+    body.pc-mode main { padding-top: 0.35rem; padding-bottom: 0.35rem; }
+    body.pc-mode footer { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+    body.pc-mode #quiz-container { row-gap: 0.6rem; }
+    body.pc-mode #answer-buttons button { padding-top: 0.55rem; padding-bottom: 0.55rem; }
+    body.pc-mode #flashcard-wrap { height: 19rem; }              /* カード高さを抑えて1画面に収める */
+    body.pc-mode #card-derived-list { max-height: 13rem; overflow-y: auto; }
+
+    /* 🖥 PC版: 学習セッション中はページ自体をスクロールさせない（循環バナーが出ても画面が動かない） */
+    body.pc-mode.session-active { height: 100vh; overflow: hidden; }
+    body.pc-mode.session-active main {
+      flex: 1 1 auto;
+      height: auto;
+      min-height: 0;
+      overflow: hidden;
+    }
+    body.pc-mode.session-active #quiz-container,
+    body.pc-mode.session-active #test-container {
+      min-height: 0;
+      overflow-y: auto;
+    }
+    body.pc-mode.session-active footer { display: none; } /* セッション中はフッターを隠して高さを確保 */
+
+    /* 🖥 PC版: ヘッダーの操作バーは膨らませない（1〜2行に収める） */
+    body.pc-mode header { padding: 0.45rem 0.7rem; }
+    body.pc-mode header h1 { font-size: 1.05rem; }
+    body.pc-mode header button,
+    body.pc-mode header select { font-size: 12.5px; padding-top: 0.3rem; padding-bottom: 0.3rem; }
+    body.pc-mode header #streak-badge,
+    body.pc-mode header #session-timer-badge,
+    body.pc-mode header #progress-indicator { font-size: 12px; }
   </style>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 antialiased flex flex-col">
@@ -676,7 +750,7 @@
         <div id="progress-bar" class="bg-indigo-500 h-full transition-all duration-300" style="width: 0%"></div>
       </div>
 
-      <div class="perspective w-full h-80 md:h-[420px] select-none">
+      <div id="flashcard-wrap" class="perspective w-full h-80 md:h-[420px] select-none">
         <div id="flashcard" class="relative w-full h-full transform-style-3d transition-transform duration-500 rounded-2xl shadow-xl">
           
           <!-- 表面：英単語 -->
@@ -734,7 +808,7 @@
       </div>
 
       <!-- ボタンエリア -->
-      <div class="space-y-2.5">
+      <div id="answer-buttons" class="space-y-2.5">
         <button onclick="handleAnswer(false)" class="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-3 text-sm md:text-base rounded-xl shadow-md transition active:scale-95 flex items-center justify-center space-x-2">
           <span>❌</span> <span>まだ（要復習）</span>
         </button>
@@ -4464,6 +4538,7 @@
       document.getElementById('pause-btn').classList.remove('hidden');
       document.getElementById('progress-indicator').classList.remove('hidden');
       document.getElementById('quiz-container').classList.remove('hidden');
+      document.body.classList.add('session-active'); // 🖥 PC版: セッション中はページを固定
       // 📋 復習済みプルダウンを表示
       const reviewedSel = document.getElementById('reviewed-words-select');
       if (reviewedSel) reviewedSel.classList.remove('hidden');
@@ -5817,6 +5892,7 @@
 
       // 結果カードを表示
       document.getElementById('result-card').classList.remove('hidden');
+      document.body.classList.remove('session-active'); // 🖥 セッション終了（結果画面）
       clearResumeData();
     }
 
@@ -6104,6 +6180,7 @@
 
     function resetToSetup() {
       clearResumeData();
+      document.body.classList.remove('session-active'); // 🖥 PC版: セッション固定を解除
 
       if (App.sessionTimer) clearInterval(App.sessionTimer); // ✨ 追加
       document.getElementById('session-timer-badge').classList.add('hidden'); // ✨ 追加
@@ -6185,6 +6262,7 @@
         stopReviewCycle();
         
         document.getElementById('setup-card').classList.remove('hidden');
+        document.body.classList.remove('session-active'); // 🖥 セッション中断
     
         checkResumeData();
       }
@@ -6263,6 +6341,8 @@
         const essayBtnResume = document.getElementById('essay-btn');
         if (essayBtnResume) essayBtnResume.classList.remove('hidden');
         updateReviewedWordsDropdown();
+
+        document.body.classList.add('session-active'); // 🖥 PC版: セッション中はページを固定
     
         if (App.isTesting) {
           document.getElementById('test-container').classList.remove('hidden');

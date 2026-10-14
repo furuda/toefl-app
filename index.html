@@ -43,6 +43,32 @@
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #f1f5f9; }
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+
+    /* ============================================================
+       🖥 PC版表示（body.pc-mode）
+       ・文字サイズを大きく（Tailwindの text-* と任意値の両方を上書き）
+       ・コンテナの横幅を広げ、余白を広く取る
+       ※ 携帯版（既定）には一切影響しません
+       ============================================================ */
+    body.pc-mode {
+      font-size: 18px;
+    }
+    body.pc-mode main {
+      max-width: 78rem;
+    }
+    body.pc-mode .text-\[10px\] { font-size: 13px; line-height: 1.35; }
+    body.pc-mode .text-\[11px\] { font-size: 14.5px; line-height: 1.55; }
+    body.pc-mode .text-xs   { font-size: 0.95rem; line-height: 1.55rem; }
+    body.pc-mode .text-sm   { font-size: 1.08rem; line-height: 1.75rem; }
+    body.pc-mode .text-base { font-size: 1.25rem; line-height: 1.9rem; }
+    body.pc-mode .text-lg   { font-size: 1.4rem;  line-height: 2.05rem; }
+    body.pc-mode .text-xl   { font-size: 1.65rem; line-height: 2.2rem; }
+    body.pc-mode .text-2xl  { font-size: 1.95rem; line-height: 2.4rem; }
+    body.pc-mode .text-3xl  { font-size: 2.35rem; line-height: 2.7rem; }
+    /* PC版は情報量が多いので、一覧系は2カラムにして見やすくする */
+    body.pc-mode #stage-breakdown-list { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+    body.pc-mode #weakness-chart-container { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+    body.pc-mode #result-word-list { max-height: 22rem; }
   </style>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 antialiased flex flex-col">
@@ -63,6 +89,10 @@
       </button>
       <button onclick="toggleTtsModal()" class="text-xs bg-indigo-700 hover:bg-indigo-800 px-2.5 py-1 rounded-lg font-medium transition flex items-center space-x-1">
         <span>⚙️</span><span class="hidden sm:inline">アプリ・発音設定</span>
+      </button>
+      <!-- 🖥 PC版／📱 携帯版の表示切り替え -->
+      <button id="display-mode-btn" onclick="toggleDisplayMode()" class="text-xs bg-indigo-700 hover:bg-indigo-800 px-2.5 py-1 rounded-lg font-medium transition flex items-center space-x-1 whitespace-nowrap" title="PC版（文字大きめ・横広）／携帯版（現状）を切り替えます">
+        <span id="display-mode-icon">🖥</span><span id="display-mode-label" class="text-[11px] font-bold">PC版</span>
       </button>
       <span id="streak-badge" class="text-xs bg-amber-500 text-white px-2 py-1 rounded-full font-bold hidden">🔥 0日連続</span>
       <!-- ✨ 追加：セッション全体のカウントダウンタイマーバッジ -->
@@ -537,6 +567,18 @@
             <input type="checkbox" id="essay-gate-setting-chk" class="w-5 h-5 accent-indigo-600 rounded cursor-pointer">
           </div>
 
+          <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+            <div>
+              <span class="text-xs font-bold text-slate-800 block">🖥 表示モード（PC版／携帯版）</span>
+              <span class="text-[10px] text-slate-400 block">PC版は文字を大きく・横幅を広く表示します</span>
+            </div>
+            <select id="display-mode-select" onchange="onDisplayModeSelectChange()" class="bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500">
+              <option value="auto">自動（画面幅で判定）</option>
+              <option value="pc">PC版（文字大きめ）</option>
+              <option value="mobile">携帯版（現状のまま）</option>
+            </select>
+          </div>
+
           <div>
             <div class="flex justify-between items-center text-xs font-semibold text-slate-700 mb-1">
               <span>再生速度（話速）:</span>
@@ -923,6 +965,7 @@
     const ESSAY_GATE_STORAGE_KEY = 'vocab_app_essay_gate_v1'; // 'ask' | 'skip'
     const ESSAY_STORAGE_KEY = 'vocab_app_essays_v1';          // 💾 生成した例文の保存先
     const ASSISTANT_CHAT_STORAGE_KEY = 'vocab_app_assistant_chat_v1'; // 💬 AIアシスタントの会話履歴
+    const DISPLAY_MODE_STORAGE_KEY = 'vocab_app_display_mode_v1';     // 🖥 'auto' | 'pc' | 'mobile'
     // 🔄 復習済み単語の記憶曲線循環
     const REVIEW_CYCLE_MS = 4000;      // 1単語あたりの表示間隔（ミリ秒）
     const MEMORY_CURVE_MAX_COPIES = 5; // 1周あたりの最大表示回数（最古=5回 / 最新=1回）
@@ -975,6 +1018,7 @@
       viewModeStage: false,
       viewTimer: null,
       viewSeq: 0,
+      displayMode: 'auto',           // 🖥 表示モード（auto / pc / mobile）
       // ✨ 追加：セッション制限時間管理用
       sessionTimer: null,
       sessionSecondsLeft: 0,
@@ -2114,12 +2158,77 @@
       btn.classList.toggle('bg-rose-600', App.viewModeStage);
     }
 
+    // ============================================
+    // 🖥📱 表示モード（PC版／携帯版）
+    //   ・auto  : 画面幅 1024px 以上なら PC版
+    //   ・pc    : 文字を大きく・横幅を広く表示（body.pc-mode）
+    //   ・mobile: 現状のまま（携帯向け）
+    // ============================================
+
+    function resolveDisplayMode_() {
+      if (App.displayMode === 'pc' || App.displayMode === 'mobile') return App.displayMode;
+      return (window.innerWidth >= 1024) ? 'pc' : 'mobile';
+    }
+
+    function applyDisplayMode_() {
+      const mode = resolveDisplayMode_();
+      const isPc = (mode === 'pc');
+      document.body.classList.toggle('pc-mode', isPc);
+
+      const icon = document.getElementById('display-mode-icon');
+      const label = document.getElementById('display-mode-label');
+      if (icon) icon.textContent = isPc ? '🖥' : '📱';
+      if (label) label.textContent = isPc ? 'PC版' : '携帯版';
+      const btn = document.getElementById('display-mode-btn');
+      if (btn) btn.title = isPc ? '現在: PC版（クリックで携帯版へ）' : '現在: 携帯版（クリックでPC版へ）';
+      const sel = document.getElementById('display-mode-select');
+      if (sel) sel.value = App.displayMode;
+    }
+
+    function loadDisplayMode_() {
+      try {
+        const saved = localStorage.getItem(DISPLAY_MODE_STORAGE_KEY);
+        if (saved === 'pc' || saved === 'mobile' || saved === 'auto') App.displayMode = saved;
+      } catch (e) {}
+      applyDisplayMode_();
+    }
+
+    /** ヘッダーのボタン: PC版 ⇄ 携帯版 */
+    function toggleDisplayMode() {
+      const current = resolveDisplayMode_();
+      App.displayMode = (current === 'pc') ? 'mobile' : 'pc';
+      try { localStorage.setItem(DISPLAY_MODE_STORAGE_KEY, App.displayMode); } catch (e) {}
+      applyDisplayMode_();
+      showToast(App.displayMode === 'pc'
+        ? '🖥 PC版表示に切り替えました（文字を大きく・横幅を広く）'
+        : '📱 携帯版表示に切り替えました', 'info');
+    }
+
+    /** 設定モーダルのプルダウン: 自動 / PC版 / 携帯版 */
+    function onDisplayModeSelectChange() {
+      const sel = document.getElementById('display-mode-select');
+      if (!sel) return;
+      App.displayMode = sel.value;
+      try { localStorage.setItem(DISPLAY_MODE_STORAGE_KEY, App.displayMode); } catch (e) {}
+      applyDisplayMode_();
+      const text = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : sel.value;
+      showToast('🖥 表示モードを「' + text + '」に変更しました', 'success');
+    }
+
     // 初期化
     window.onload = function() {
       loadTtsSettings();
       restoreEssaysFromStorage_(); // 💾 前回保存した例文があれば起動時に復元
       loadAssistantChat_();        // 💬 AIアシスタントの会話履歴を復元
       renderAssistantChat();
+      loadDisplayMode_();          // 🖥 表示モード（PC版／携帯版）を適用
+
+      // 画面幅が変わったとき（auto のとき）は自動で切り替える
+      window.addEventListener('resize', () => {
+        if (App.displayMode !== 'auto') return;
+        clearTimeout(App.__displayModeTimer);
+        App.__displayModeTimer = setTimeout(applyDisplayMode_, 200);
+      });
 
       if ('speechSynthesis' in window) {
         window.speechSynthesis.getVoices();
@@ -7156,6 +7265,9 @@
         badge.textContent = `⏳ ${timeStr}`;
       }
     }
+
+    // 🖥 画面のちらつきを避けるため、読み込み直後にも表示モードを適用する
+    loadDisplayMode_();
   </script>
 </body>
 </html>

@@ -137,6 +137,12 @@
 
     /* 🖥 PC版: ヘッダーの操作バーは膨らませない（1〜2行に収める） */
     body.pc-mode header { padding: 0.45rem 0.7rem; }
+    /* ↕ カード高さ調整ハンドル（PC・携帯どちらでもドラッグ可能） */
+    #card-resize-handle { touch-action: none; }
+    #card-resize-handle.dragging { background: rgba(99, 102, 241, 0.12); border-radius: 0.75rem; }
+    /* ↕ 設定した高さが flex で縮められないようにする（高さ調整を有効にするための必須指定） */
+    #flashcard-wrap { flex: 0 0 auto; }
+
     body.pc-mode header h1 { font-size: 1.05rem; }
     body.pc-mode header button,
     body.pc-mode header select { font-size: 12.5px; padding-top: 0.3rem; padding-bottom: 0.3rem; }
@@ -807,6 +813,14 @@
         </div>
       </div>
 
+      <!-- ↕ カードの高さをドラッグで調整（ダブルクリックで初期値に戻す） -->
+      <div id="card-resize-handle" class="flex items-center justify-center gap-2 py-1.5 select-none cursor-ns-resize group" title="マウスでドラッグしてカードの高さを調整（ダブルクリックで初期値に戻す）">
+        <span class="h-1.5 w-12 rounded-full bg-slate-300 group-hover:bg-indigo-400 transition"></span>
+        <span class="text-[10px] font-bold text-slate-400 group-hover:text-indigo-500 whitespace-nowrap">↕ ドラッグで高さ調整</span>
+        <span id="card-resize-label" class="text-[10px] font-mono font-bold text-indigo-500">-</span>
+        <span class="h-1.5 w-12 rounded-full bg-slate-300 group-hover:bg-indigo-400 transition"></span>
+      </div>
+
       <!-- ボタンエリア -->
       <div id="answer-buttons" class="space-y-2.5">
         <button onclick="handleAnswer(false)" class="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-3 text-sm md:text-base rounded-xl shadow-md transition active:scale-95 flex items-center justify-center space-x-2">
@@ -1040,6 +1054,7 @@
     const ESSAY_STORAGE_KEY = 'vocab_app_essays_v1';          // 💾 生成した例文の保存先
     const ASSISTANT_CHAT_STORAGE_KEY = 'vocab_app_assistant_chat_v1'; // 💬 AIアシスタントの会話履歴
     const DISPLAY_MODE_STORAGE_KEY = 'vocab_app_display_mode_v1';     // 🖥 'auto' | 'pc' | 'mobile'
+    const CARD_HEIGHT_STORAGE_KEY = 'vocab_app_card_height_v1';       // ↕ カード高さ（pc / mobile 別）
     // 🔄 復習済み単語の記憶曲線循環
     const REVIEW_CYCLE_MS = 4000;      // 1単語あたりの表示間隔（ミリ秒）
     const MEMORY_CURVE_MAX_COPIES = 5; // 1周あたりの最大表示回数（最古=5回 / 最新=1回）
@@ -1093,6 +1108,7 @@
       viewTimer: null,
       viewSeq: 0,
       displayMode: 'auto',           // 🖥 表示モード（auto / pc / mobile）
+      cardHeights: {},               // ↕ カード高さ（{ pc: px, mobile: px }）
       // ✨ 追加：セッション制限時間管理用
       sessionTimer: null,
       sessionSecondsLeft: 0,
@@ -2257,6 +2273,7 @@
       if (btn) btn.title = isPc ? '現在: PC版（クリックで携帯版へ）' : '現在: 携帯版（クリックでPC版へ）';
       const sel = document.getElementById('display-mode-select');
       if (sel) sel.value = App.displayMode;
+      applyCardHeight_(); // ↕ 表示モードごとのカード高さを適用
     }
 
     function loadDisplayMode_() {
@@ -2289,6 +2306,130 @@
       showToast('🖥 表示モードを「' + text + '」に変更しました', 'success');
     }
 
+    // ============================================
+    // ↕ カード高さの調整（マウス／タッチでドラッグ）
+    //   ・PC版と携帯版で別々の高さを保存
+    //   ・ダブルクリックで初期値に戻す
+    // ============================================
+
+    function loadCardHeights_() {
+      try {
+        const raw = localStorage.getItem(CARD_HEIGHT_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') App.cardHeights = parsed;
+        }
+      } catch (e) {}
+    }
+
+    function saveCardHeights_() {
+      try {
+        localStorage.setItem(CARD_HEIGHT_STORAGE_KEY, JSON.stringify(App.cardHeights || {}));
+      } catch (e) {}
+    }
+
+    /** 現在の表示モード（pc / mobile）ごとに高さを保存する */
+    function currentCardHeightMode_() {
+      return (resolveDisplayMode_() === 'pc') ? 'pc' : 'mobile';
+    }
+
+    function updateCardResizeLabel_(px) {
+      const label = document.getElementById('card-resize-label');
+      if (label) label.textContent = (px ? Math.round(px) : '-') + 'px';
+    }
+
+    /** カードの現在の高さ（取得できない環境では0） */
+    function cardWrapHeightPx_(wrap) {
+      try {
+        if (wrap && typeof wrap.getBoundingClientRect === 'function') {
+          return Math.round(wrap.getBoundingClientRect().height);
+        }
+      } catch (e) {}
+      return 0;
+    }
+
+    /** 保存された高さをカードへ適用（未設定ならCSSの既定値） */
+    function applyCardHeight_() {
+      const wrap = document.getElementById('flashcard-wrap');
+      if (!wrap) return;
+      const mode = currentCardHeightMode_();
+      const saved = App.cardHeights ? App.cardHeights[mode] : null;
+      if (saved && Number(saved) > 0) {
+        wrap.style.height = Math.round(Number(saved)) + 'px';
+        updateCardResizeLabel_(Number(saved));
+      } else {
+        wrap.style.height = '';
+        updateCardResizeLabel_(cardWrapHeightPx_(wrap));
+      }
+    }
+
+    /** カードの高さを設定（画面内に収まる範囲へ丸める） */
+    function setCardHeight_(px, persist) {
+      const wrap = document.getElementById('flashcard-wrap');
+      if (!wrap) return;
+      const maxH = Math.max(240, window.innerHeight - 240); // 画面内に収める
+      const clamped = Math.max(180, Math.min(Math.round(px), maxH));
+      wrap.style.height = clamped + 'px';
+      updateCardResizeLabel_(clamped);
+      if (persist !== false) {
+        App.cardHeights = App.cardHeights || {};
+        App.cardHeights[currentCardHeightMode_()] = clamped;
+        saveCardHeights_();
+      }
+    }
+
+    /** ドラッグ操作の初期化（1度だけ） */
+    function initCardResize_() {
+      const handle = document.getElementById('card-resize-handle');
+      const wrap = document.getElementById('flashcard-wrap');
+      if (!handle || !wrap || handle.dataset.resizeBound) return;
+      handle.dataset.resizeBound = '1';
+
+      let startY = 0;
+      let startH = 0;
+      let dragging = false;
+
+      const onStart = (y) => {
+        dragging = true;
+        startY = y;
+        startH = cardWrapHeightPx_(wrap) || 300;
+        handle.classList.add('dragging');
+        document.body.style.userSelect = 'none';
+      };
+      const onMove = (y) => {
+        if (!dragging) return;
+        setCardHeight_(startH + (y - startY));
+      };
+      const onEnd = () => {
+        if (!dragging) return;
+        dragging = false;
+        handle.classList.remove('dragging');
+        document.body.style.userSelect = '';
+      };
+
+      // マウス
+      handle.addEventListener('mousedown', (e) => { e.preventDefault(); onStart(e.clientY); });
+      window.addEventListener('mousemove', (e) => onMove(e.clientY));
+      window.addEventListener('mouseup', onEnd);
+      // タッチ
+      handle.addEventListener('touchstart', (e) => { if (e.touches && e.touches[0]) onStart(e.touches[0].clientY); }, { passive: true });
+      handle.addEventListener('touchmove', (e) => {
+        if (e.touches && e.touches[0]) { onMove(e.touches[0].clientY); e.preventDefault(); }
+      }, { passive: false });
+      handle.addEventListener('touchend', onEnd);
+      // ダブルクリックで初期値に戻す
+      handle.addEventListener('dblclick', () => {
+        wrap.style.height = '';
+        const mode = currentCardHeightMode_();
+        if (App.cardHeights) delete App.cardHeights[mode];
+        saveCardHeights_();
+        updateCardResizeLabel_(cardWrapHeightPx_(wrap));
+        showToast('↕ カードの高さを初期値に戻しました', 'info');
+      });
+
+      updateCardResizeLabel_(cardWrapHeightPx_(wrap));
+    }
+
     // 初期化
     window.onload = function() {
       loadTtsSettings();
@@ -2296,6 +2437,9 @@
       loadAssistantChat_();        // 💬 AIアシスタントの会話履歴を復元
       renderAssistantChat();
       loadDisplayMode_();          // 🖥 表示モード（PC版／携帯版）を適用
+      loadCardHeights_();          // ↕ カード高さの保存値を読み込む
+      initCardResize_();           // ↕ カード高さのドラッグ調整を有効化
+      applyCardHeight_();
 
       // 画面幅が変わったとき（auto のとき）は自動で切り替える
       window.addEventListener('resize', () => {
@@ -4548,6 +4692,7 @@
       // 📝 例文作成ボタンを表示
       const essayBtn = document.getElementById('essay-btn');
       if (essayBtn) essayBtn.classList.remove('hidden');
+      applyCardHeight_(); // ↕ 保存されたカード高さを適用
       updateReviewedWordsDropdown();
     
       showCurrentCard();
@@ -6343,6 +6488,7 @@
         updateReviewedWordsDropdown();
 
         document.body.classList.add('session-active'); // 🖥 PC版: セッション中はページを固定
+        applyCardHeight_(); // ↕ 保存されたカード高さを適用
     
         if (App.isTesting) {
           document.getElementById('test-container').classList.remove('hidden');

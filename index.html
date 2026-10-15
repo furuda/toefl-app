@@ -118,7 +118,8 @@
     body.pc-mode #quiz-container { row-gap: 0.6rem; }
     body.pc-mode #answer-buttons button { padding-top: 0.55rem; padding-bottom: 0.55rem; }
     body.pc-mode #flashcard-wrap { height: 19rem; }              /* カード高さを抑えて1画面に収める */
-    body.pc-mode #card-derived-list { max-height: 13rem; overflow-y: auto; }
+    /* ※ #card-derived-list の高さは「カード高さ」に合わせて自動で決まるため、
+         固定の max-height は指定しない（指定すると内容より上で頭打ちになり空白が残る） */
 
     /* 🖥 PC版: 学習セッション中はページ自体をスクロールさせない（循環バナーが出ても画面が動かない） */
     body.pc-mode.session-active { height: 100vh; overflow: hidden; }
@@ -142,6 +143,51 @@
     #card-resize-handle.dragging { background: rgba(99, 102, 241, 0.12); border-radius: 0.75rem; }
     /* ↕ 設定した高さが flex で縮められないようにする（高さ調整を有効にするための必須指定） */
     #flashcard-wrap { flex: 0 0 auto; }
+
+    /* ============================================================
+       ↕ カード高さに連動して「中身」も一緒にコントロールする
+        ・--card-h に現在のカード高さ（px）が入る（JSが更新）
+        ・文字サイズを高さに比例して拡大縮小（読みやすい範囲でクランプ）
+        ・高さが足りないときはカード内でスクロールし、内容が切れないようにする
+       ============================================================ */
+    #flashcard-wrap {
+      --card-h: 320px;
+      --card-content-font: clamp(11px, calc(var(--card-h) * 0.034), 16px);
+    }
+    /* 表：英単語／意味のサイズを高さに合わせる */
+    #flashcard-wrap #card-word { font-size: clamp(1.7rem, calc(var(--card-h) * 0.12), 3.8rem); line-height: 1.15; }
+    #flashcard-wrap #card-meaning-ja { font-size: clamp(1.1rem, calc(var(--card-h) * 0.075), 2.5rem); }
+    /* 裏：見出し単語と本文（例文・派生語）のサイズを高さに合わせる */
+    #flashcard-wrap #card-back-word-text { font-size: clamp(1.3rem, calc(var(--card-h) * 0.095), 2.8rem); }
+    #flashcard-wrap #card-derived-list .text-xs { font-size: var(--card-content-font); line-height: 1.55; }
+    #flashcard-wrap #card-derived-list .text-\[10px\] { font-size: calc(var(--card-content-font) * 0.86); }
+    #flashcard-wrap #card-derived-list .text-\[11px\] { font-size: calc(var(--card-content-font) * 0.94); }
+    #flashcard-wrap #card-derived-list h4 { font-size: calc(var(--card-content-font) * 1.05); }
+    /* カード内のスクロール制御（高さを変えても内容が崩れない） */
+    #flashcard-wrap #card-face-front { overflow: hidden; }
+    #flashcard-wrap #card-front-body {
+      flex: 0 1 auto; /* 自動フィット時は内容ぴったり（手動固定時のみ伸ばす） */
+      min-height: 0;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: safe center;
+      align-items: center;
+      overflow-y: auto;
+    }
+    #flashcard-wrap.manual-fit #card-front-body { flex: 1 1 auto; }
+    #flashcard-wrap #card-face-back { overflow: hidden; }
+    /* 既定（自動フィット）は内容ぴったりの高さにする。ドラッグで手動固定中のみ残り領域を使う */
+    #flashcard-wrap #card-derived-list { flex: 0 0 auto; min-height: 0; overflow-y: auto; }
+    #flashcard-wrap.manual-fit #card-derived-list { flex: 1 1 auto; }
+    /* 「次回復習予定」は常にカードの最下位に固定（内容が短くても・スクロールしても下に残る） */
+    #flashcard-wrap #card-next-review-row {
+      margin-top: auto;
+      position: sticky;
+      bottom: 0;
+      z-index: 1;
+      background: #eef2ff; /* 裏面の背景（indigo-50）と同色で下の内容を隠す */
+    }
 
     body.pc-mode header h1 { font-size: 1.05rem; }
     body.pc-mode header button,
@@ -760,13 +806,13 @@
         <div id="flashcard" class="relative w-full h-full transform-style-3d transition-transform duration-500 rounded-2xl shadow-xl">
           
           <!-- 表面：英単語 -->
-          <div class="absolute inset-0 backface-hidden bg-white border-2 border-indigo-100 rounded-2xl p-6 flex flex-col justify-between items-center text-center">
+          <div id="card-face-front" class="absolute inset-0 backface-hidden bg-white border-2 border-indigo-100 rounded-2xl p-6 flex flex-col justify-between items-center text-center">
             <div class="flex justify-between w-full text-xs font-semibold text-slate-400">
               <span id="card-stage" class="bg-slate-100 px-2 py-1 rounded">Stage 01</span>
               <span id="card-importance" class="bg-indigo-50 text-indigo-600 px-2 py-1 rounded">必須</span>
             </div>
             
-            <div class="my-auto cursor-pointer group" onclick="speakCurrentWord(event)">
+            <div id="card-front-body" class="my-auto cursor-pointer group" onclick="speakCurrentWord(event)">
               <div id="card-front-en" class="flex items-center justify-center space-x-2">
                 <h3 id="card-word" class="text-4xl md:text-5xl font-extrabold text-slate-800 tracking-wide">Word</h3>
                 <span class="text-2xl text-indigo-500 group-hover:scale-110 transition-transform">🔊</span>
@@ -791,7 +837,7 @@
           </div>
 
           <!-- 裏面：詳細・例文・派生語 -->
-          <div class="absolute inset-0 backface-hidden rotate-y-180 bg-indigo-50 border-2 border-indigo-200 rounded-2xl p-5 flex flex-col overflow-y-auto">
+          <div id="card-face-back" class="absolute inset-0 backface-hidden rotate-y-180 bg-indigo-50 border-2 border-indigo-200 rounded-2xl p-5 flex flex-col overflow-y-auto">
             <div class="flex justify-between items-center border-b border-indigo-200 pb-2 mb-3">
               <span class="text-xs font-bold text-indigo-600 uppercase tracking-wider">詳細・派生語</span>
               <button onclick="flipCard()" class="text-xs font-bold text-indigo-600 bg-white px-2.5 py-1 rounded shadow-sm">
@@ -805,7 +851,7 @@
             </div>
             <div id="card-derived-list" class="space-y-2.5 text-left flex-grow">
             </div>
-            <div class="mt-3 pt-2 border-t border-indigo-200 text-xs text-indigo-600 text-center">
+            <div id="card-next-review-row" class="mt-3 pt-2 border-t border-indigo-200 text-xs text-indigo-600 text-center">
               次回復習予定: <span id="card-next-review">-</span>
             </div>
           </div>
@@ -1055,6 +1101,7 @@
     const ASSISTANT_CHAT_STORAGE_KEY = 'vocab_app_assistant_chat_v1'; // 💬 AIアシスタントの会話履歴
     const DISPLAY_MODE_STORAGE_KEY = 'vocab_app_display_mode_v1';     // 🖥 'auto' | 'pc' | 'mobile'
     const CARD_HEIGHT_STORAGE_KEY = 'vocab_app_card_height_v1';       // ↕ カード高さ（pc / mobile 別）
+    const CARD_HEIGHT_MODE_STORAGE_KEY = 'vocab_app_card_height_mode_v1'; // ↕ 'auto' | 'manual'
     // 🔄 復習済み単語の記憶曲線循環
     const REVIEW_CYCLE_MS = 4000;      // 1単語あたりの表示間隔（ミリ秒）
     const MEMORY_CURVE_MAX_COPIES = 5; // 1周あたりの最大表示回数（最古=5回 / 最新=1回）
@@ -1109,6 +1156,7 @@
       viewSeq: 0,
       displayMode: 'auto',           // 🖥 表示モード（auto / pc / mobile）
       cardHeights: {},               // ↕ カード高さ（{ pc: px, mobile: px }）
+      cardHeightMode: 'auto',        // ↕ 'auto'（内容ぴったり） | 'manual'（ドラッグで固定）
       // ✨ 追加：セッション制限時間管理用
       sessionTimer: null,
       sessionSecondsLeft: 0,
@@ -2322,6 +2370,17 @@
       } catch (e) {}
     }
 
+    function loadCardHeightMode_() {
+      try {
+        const m = localStorage.getItem(CARD_HEIGHT_MODE_STORAGE_KEY);
+        if (m === 'manual' || m === 'auto') App.cardHeightMode = m;
+      } catch (e) {}
+    }
+
+    function saveCardHeightMode_() {
+      try { localStorage.setItem(CARD_HEIGHT_MODE_STORAGE_KEY, App.cardHeightMode); } catch (e) {}
+    }
+
     function saveCardHeights_() {
       try {
         localStorage.setItem(CARD_HEIGHT_STORAGE_KEY, JSON.stringify(App.cardHeights || {}));
@@ -2348,19 +2407,86 @@
       return 0;
     }
 
+    /** カード高さをCSS変数 --card-h に反映（中身の文字サイズが連動して変わる） */
+    function setCardHeightVar_(wrap, px) {
+      try {
+        if (wrap && wrap.style && typeof wrap.style.setProperty === 'function') {
+          wrap.style.setProperty('--card-h', Math.round(px) + 'px');
+        }
+      } catch (e) {}
+    }
+
     /** 保存された高さをカードへ適用（未設定ならCSSの既定値） */
     function applyCardHeight_() {
       const wrap = document.getElementById('flashcard-wrap');
       if (!wrap) return;
       const mode = currentCardHeightMode_();
       const saved = App.cardHeights ? App.cardHeights[mode] : null;
-      if (saved && Number(saved) > 0) {
+      if (App.cardHeightMode === 'manual' && saved && Number(saved) > 0) {
+        wrap.classList.add('manual-fit');
         wrap.style.height = Math.round(Number(saved)) + 'px';
         updateCardResizeLabel_(Number(saved));
+        setCardHeightVar_(wrap, Number(saved)); // 中身の文字サイズも連動
       } else {
-        wrap.style.height = '';
-        updateCardResizeLabel_(cardWrapHeightPx_(wrap));
+        // 既定は「内容ぴったり」＝下に大きな空白を作らない
+        App.cardHeightMode = 'auto';
+        wrap.classList.remove('manual-fit');
+        fitCardHeightToContent_();
       }
+    }
+
+    /** いま表示している面（表／裏）を返す */
+    function getVisibleCardFace_() {
+      return App.isFlipped
+        ? document.getElementById('card-face-back')
+        : document.getElementById('card-face-front');
+    }
+
+    /**
+     * 面の中身を並べたときに必要な高さを測る（余白・罫線込み）
+     * ※ flex の伸長（manual-fit）に影響されないよう、各要素の実際の高さを合計する
+     */
+    function measureCardFaceContentHeight_(face) {
+      if (!face || typeof getComputedStyle !== 'function') return 0;
+      let total = 0;
+      try {
+        const cs = getComputedStyle(face);
+        total += (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
+              + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+        Array.from(face.children || []).forEach(child => {
+          const ccs = getComputedStyle(child);
+          if (ccs.display === 'none') return;
+          const rectH = (typeof child.getBoundingClientRect === 'function')
+            ? child.getBoundingClientRect().height : 0;
+          total += rectH + (parseFloat(ccs.marginTop) || 0) + (parseFloat(ccs.marginBottom) || 0);
+        });
+      } catch (e) {
+        return 0;
+      }
+      return Math.ceil(total);
+    }
+
+    /** 自動フィット: 表示中の面の内容に合わせてカードの高さを決める（不要な空白を作らない） */
+    function fitCardHeightToContent_() {
+      if (App.cardHeightMode !== 'auto') return;
+      const wrap = document.getElementById('flashcard-wrap');
+      if (!wrap) return;
+      const quiz = document.getElementById('quiz-container');
+      if (quiz && quiz.classList.contains('hidden')) return; // 学習画面以外では何もしない
+
+      // 計測の前に「残り領域まで伸ばす」設定を解除する
+      // （前の面の状態が残ったままだと、内容より大きく測れてしまうため）
+      wrap.classList.remove('manual-fit');
+      const h = measureCardFaceContentHeight_(getVisibleCardFace_());
+      if (!h) return;
+      const maxH = Math.max(240, window.innerHeight - 240);
+      const clamped = Math.max(180, Math.min(h, maxH));
+      // 内容が画面内に収まらない場合は、カード内スクロールに切り替える
+      // （残り領域を内容に割り当てて、はみ出し・見切れを防ぐ）
+      wrap.classList.toggle('manual-fit', h > maxH);
+      wrap.style.height = clamped + 'px';
+      setCardHeightVar_(wrap, clamped);
+      updateCardResizeLabel_(clamped);
     }
 
     /** カードの高さを設定（画面内に収まる範囲へ丸める） */
@@ -2370,7 +2496,13 @@
       const maxH = Math.max(240, window.innerHeight - 240); // 画面内に収める
       const clamped = Math.max(180, Math.min(Math.round(px), maxH));
       wrap.style.height = clamped + 'px';
+      // ↕ 高さに合わせて中身（文字サイズ・余白）も一緒に調整する
+      setCardHeightVar_(wrap, clamped);
       updateCardResizeLabel_(clamped);
+      // ドラッグしたら「手動固定モード」に切り替える（残り領域を使ってスクロール）
+      App.cardHeightMode = 'manual';
+      wrap.classList.add('manual-fit');
+      saveCardHeightMode_();
       if (persist !== false) {
         App.cardHeights = App.cardHeights || {};
         App.cardHeights[currentCardHeightMode_()] = clamped;
@@ -2419,12 +2551,15 @@
       handle.addEventListener('touchend', onEnd);
       // ダブルクリックで初期値に戻す
       handle.addEventListener('dblclick', () => {
-        wrap.style.height = '';
+        // ダブルクリックで「内容ぴったりの自動フィット」に戻す
+        App.cardHeightMode = 'auto';
+        saveCardHeightMode_();
+        wrap.classList.remove('manual-fit');
         const mode = currentCardHeightMode_();
         if (App.cardHeights) delete App.cardHeights[mode];
         saveCardHeights_();
-        updateCardResizeLabel_(cardWrapHeightPx_(wrap));
-        showToast('↕ カードの高さを初期値に戻しました', 'info');
+        fitCardHeightToContent_();
+        showToast('↕ カードを内容ぴったりの高さに戻しました', 'info');
       });
 
       updateCardResizeLabel_(cardWrapHeightPx_(wrap));
@@ -2438,6 +2573,7 @@
       renderAssistantChat();
       loadDisplayMode_();          // 🖥 表示モード（PC版／携帯版）を適用
       loadCardHeights_();          // ↕ カード高さの保存値を読み込む
+      loadCardHeightMode_();       // ↕ 自動フィット／手動固定の設定を読み込む
       initCardResize_();           // ↕ カード高さのドラッグ調整を有効化
       applyCardHeight_();
 
@@ -4881,6 +5017,9 @@
       if (App.tts.autoPlay && !App.currentCardReverse) {
         speakText(item.word);
       }
+
+      // ↕ 自動フィット時は内容に合わせてカードの高さを調整（下に大きな空白を作らない）
+      fitCardHeightToContent_();
     }
 
     function flipCard() {
@@ -4891,6 +5030,8 @@
       } else {
         card.classList.remove('rotate-y-180');
       }
+      // ↕ 自動フィット時は、表示する面に合わせて高さを調整（空白を作らない）
+      fitCardHeightToContent_();
     }
 
     /**
